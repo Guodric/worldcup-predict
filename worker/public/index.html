@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>世界杯竞猜 2026</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #0a0e27;
+  color: #eee;
+  min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+}
+.container { max-width: 420px; margin: 0 auto; padding: 12px 16px; }
+h1 {
+  text-align: center;
+  font-size: 22px;
+  margin: 10px 0 14px;
+  background: linear-gradient(135deg, #e94560, #f5a623);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; position: sticky; top: 0; z-index: 10; background: #0a0e27; padding: 4px 0; }
+.tab {
+  flex: 1; padding: 10px 0; text-align: center;
+  background: #16213e; border-radius: 8px;
+  cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all 0.2s;
+}
+.tab.active { background: #e94560; font-weight: bold; }
+.panel { display: none; }
+.panel.active { display: block; }
+.card {
+  background: #16213e; border-radius: 12px;
+  padding: 14px; margin-bottom: 10px;
+}
+.match-header { font-size: 11px; color: #888; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.match-teams { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 10px; }
+.team-name { font-size: 15px; font-weight: 600; min-width: 60px; }
+.team-left { text-align: right; }
+.team-right { text-align: left; }
+.vs { color: #e94560; font-weight: bold; font-size: 12px; }
+.score-input { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.score-input input {
+  width: 52px; height: 44px; text-align: center;
+  font-size: 22px; font-weight: bold;
+  background: #0f3460; border: 2px solid #e94560;
+  border-radius: 10px; color: #fff; outline: none;
+  -webkit-appearance: none;
+}
+.score-input input:focus { border-color: #f5a623; box-shadow: 0 0 8px rgba(245,166,35,0.3); }
+.score-input .colon { font-size: 22px; color: #888; font-weight: bold; }
+.nickname-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.nickname-input {
+  flex: 1; padding: 12px; background: #0f3460;
+  border: 2px solid #333; border-radius: 8px;
+  color: #fff; font-size: 15px; outline: none;
+}
+.nickname-input:focus { border-color: #e94560; }
+.nick-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.nick-chip {
+  padding: 10px 16px; background: #0f3460; border: 1px solid #444;
+  border-radius: 20px; font-size: 14px; cursor: pointer;
+  transition: all 0.2s;
+}
+.nick-chip:active { transform: scale(0.95); }
+.nick-chip.selected { background: #e94560; border-color: #e94560; font-weight: bold; }
+.btn {
+  padding: 14px 20px; background: linear-gradient(135deg, #e94560, #f5a623);
+  border: none; border-radius: 8px; color: #fff;
+  font-size: 15px; font-weight: bold; cursor: pointer;
+  transition: opacity 0.2s; width: 100%;
+}
+.btn:active { opacity: 0.8; transform: scale(0.98); }
+.btn:disabled { opacity: 0.4; }
+.deadline-note { text-align: center; font-size: 12px; color: #f5a623; margin-bottom: 10px; }
+.submitted-badge {
+  text-align: center; padding: 8px; margin-bottom: 10px;
+  background: rgba(76,175,80,0.15); border: 1px solid #4CAF50;
+  border-radius: 8px; font-size: 13px; color: #4CAF50;
+}
+.lb-item { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #0f3460; }
+.lb-item:last-child { border-bottom: none; }
+.lb-rank {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-weight: bold; font-size: 13px; margin-right: 10px;
+  background: #0f3460;
+}
+.lb-rank-1 { background: #f5a623; color: #000; }
+.lb-rank-2 { background: #c0c0c0; color: #000; }
+.lb-rank-3 { background: #cd7f32; color: #000; }
+.lb-name { flex: 1; font-weight: 600; font-size: 14px; }
+.lb-score { font-size: 18px; font-weight: bold; color: #f5a623; }
+.date-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.date-nav button {
+  background: #0f3460; border: 1px solid #e94560;
+  color: #fff; padding: 6px 14px; border-radius: 6px;
+  cursor: pointer; font-size: 14px;
+}
+.date-nav span { font-size: 14px; font-weight: bold; }
+.result-badge {
+  display: inline-block; padding: 2px 6px; border-radius: 4px;
+  font-size: 11px; font-weight: bold; margin-left: 6px;
+}
+.badge-5 { background: #f5a623; color: #000; }
+.badge-2 { background: #4CAF50; color: #fff; }
+.badge-1 { background: #2196F3; color: #fff; }
+.badge-0 { background: #444; color: #888; }
+.actual-score { text-align: center; font-size: 16px; font-weight: bold; color: #4CAF50; margin: 4px 0; }
+.pred-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; color: #ccc; }
+.rules { font-size: 13px; line-height: 2; color: #aaa; }
+.rules h3 { color: #e94560; margin: 10px 0 6px; }
+.rules strong { color: #f5a623; }
+.toast {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  background: #4CAF50; color: #fff; padding: 10px 20px;
+  border-radius: 8px; font-size: 14px; display: none; z-index: 999;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.toast.error { background: #e94560; }
+.match-card { position: relative; }
+.no-match-today { text-align: center; color: #888; padding: 20px 0; }
+.no-match-today .next-date { color: #f5a623; cursor: pointer; text-decoration: underline; margin-top: 8px; font-size: 13px; }
+.day-ranking { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>⚽ 世界杯竞猜 2026</h1>
+  <div class="tabs">
+    <div class="tab active" data-panel="predict">竞猜</div>
+    <div class="tab" data-panel="leaderboard">排行</div>
+    <div class="tab" data-panel="history">战报</div>
+    <div class="tab" data-panel="rules">规则</div>
+    <div class="tab" data-panel="admin">管理</div>
+  </div>
+
+  <div class="panel active" id="predict">
+    <input type="hidden" id="nickname" />
+    <div class="nick-chips" id="nick-chips"></div>
+    <div class="deadline-note" id="deadline-note"></div>
+    <div id="submitted-info"></div>
+    <div id="matches-list"></div>
+    <button class="btn" id="submit-btn">提交预测</button>
+  </div>
+
+  <div class="panel" id="leaderboard">
+    <div class="card" id="lb-card">
+      <div id="lb-list"><p style="text-align:center;color:#888;">加载中...</p></div>
+    </div>
+  </div>
+
+  <div class="panel" id="history">
+    <div class="date-nav">
+      <button onclick="changeDate(-1)">◀</button>
+      <span id="history-date"></span>
+      <button onclick="changeDate(1)">▶</button>
+    </div>
+    <div id="history-list"></div>
+  </div>
+
+  <div class="panel" id="rules">
+    <div class="card rules">
+      <h3>💰 每日奖池</h3>
+      <p>每人每场 <strong>5元</strong>，奖池 = 参与人数 × 5 × 当日场次</p>
+      <p>🥇 第一名：<strong>60%</strong></p>
+      <p>🥈 第二名：<strong>30%</strong></p>
+      <p>🥉 第三名：<strong>10%</strong></p>
+      <p style="font-size:11px;color:#666;margin-top:4px;">不满7人也按实际参与人数计算</p>
+
+      <h3>🎯 排名规则（逐条比较，前条平才看后条）</h3>
+      <p>1️⃣ <strong>猜对胜负平场次</strong>（多者赢）</p>
+      <p>2️⃣ <strong>净胜球偏差</strong>（逐场 |你猜净胜球 - 实际净胜球| 之和，小者赢）</p>
+      <p>3️⃣ <strong>进球偏差</strong>（逐场逐队 |你猜主队进球-实际| + |客队| 之和，小者赢）</p>
+
+      <h3>📋 参与规则</h3>
+      <p>• 每天所有比赛必须全部预测</p>
+      <p>• 当天第一场开赛前可修改</p>
+      <p>• 开赛后自动锁定</p>
+      <p>• 每天独立结算，互不影响</p>
+
+      <h3>💡 举例</h3>
+      <p>实际：巴西 2:1 德国（主胜，净胜球+1，总进球3）</p>
+      <p>小A猜 3:0 → 胜负✅ 净胜球偏差|3-1|=2 进球偏差|3-2|+|0-1|=2</p>
+      <p>小B猜 2:0 → 胜负✅ 净胜球偏差|2-1|=1 进球偏差|2-2|+|0-1|=1</p>
+      <p>小C猜 0:1 → 胜负❌</p>
+      <p>→ 小A小B胜负都对，看净胜球偏差，小B=1 < 小A=2，<strong>小B赢</strong></p>
+    </div>
+  </div>
+
+  <div class="panel" id="admin">
+    <div class="card">
+      <div style="font-size:13px;color:#888;margin-bottom:10px;">🔒 管理员录入比赛结果</div>
+      <input type="password" class="nickname-input" id="admin-pass" placeholder="管理员密码" style="margin-bottom:10px;" />
+      <div class="date-nav" style="margin-bottom:10px;">
+        <button onclick="changeAdminDate(-1)">◀</button>
+        <span id="admin-date"></span>
+        <button onclick="changeAdminDate(1)">▶</button>
+      </div>
+      <div id="admin-matches"></div>
+      <button class="btn" id="admin-submit-btn" onclick="submitResults()">录入结果</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============ 群成员 ============
+const MEMBERS = ['球王', '喂狗', '林彪', '佩雷兹', '方烁', '航班', '泳佳'];
+
+// ============ 完整小组赛赛程 (北京时间) ============
+const SCHEDULE = {
+  '2026-06-12': [
+    { id: 'A01', home: '墨西哥', away: '南非', time: '03:00', group: 'A组' },
+    { id: 'A02', home: '韩国', away: '捷克', time: '10:00', group: 'A组' },
+  ],
+  '2026-06-13': [
+    { id: 'B01', home: '加拿大', away: '波黑', time: '03:00', group: 'B组' },
+    { id: 'D01', home: '美国', away: '巴拉圭', time: '09:00', group: 'D组' },
+  ],
+  '2026-06-14': [
+    { id: 'B02', home: '卡塔尔', away: '瑞士', time: '03:00', group: 'B组' },
+    { id: 'C01', home: '巴西', away: '摩洛哥', time: '06:00', group: 'C组' },
+    { id: 'C02', home: '海地', away: '苏格兰', time: '09:00', group: 'C组' },
+    { id: 'D02', home: '澳大利亚', away: '土耳其', time: '12:00', group: 'D组' },
+  ],
+  '2026-06-15': [
+    { id: 'E01', home: '德国', away: '库拉索', time: '01:00', group: 'E组' },
+    { id: 'F01', home: '荷兰', away: '日本', time: '04:00', group: 'F组' },
+    { id: 'E02', home: '科特迪瓦', away: '厄瓜多尔', time: '07:00', group: 'E组' },
+    { id: 'F02', home: '瑞典', away: '突尼斯', time: '10:00', group: 'F组' },
+  ],
+  '2026-06-16': [
+    { id: 'H01', home: '西班牙', away: '佛得角', time: '00:00', group: 'H组' },
+    { id: 'G01', home: '比利时', away: '埃及', time: '03:00', group: 'G组' },
+    { id: 'H02', home: '沙特', away: '乌拉圭', time: '06:00', group: 'H组' },
+    { id: 'G02', home: '伊朗', away: '新西兰', time: '09:00', group: 'G组' },
+  ],
+  '2026-06-17': [
+    { id: 'I01', home: '法国', away: '塞内加尔', time: '03:00', group: 'I组' },
+    { id: 'I02', home: '伊拉克', away: '挪威', time: '06:00', group: 'I组' },
+    { id: 'J01', home: '阿根廷', away: '阿尔及利亚', time: '09:00', group: 'J组' },
+    { id: 'J02', home: '奥地利', away: '约旦', time: '12:00', group: 'J组' },
+  ],
+  '2026-06-18': [
+    { id: 'K01', home: '葡萄牙', away: '刚果(金)', time: '01:00', group: 'K组' },
+    { id: 'L01', home: '英格兰', away: '克罗地亚', time: '04:00', group: 'L组' },
+    { id: 'L02', home: '加纳', away: '巴拿马', time: '07:00', group: 'L组' },
+    { id: 'K02', home: '乌兹别克斯坦', away: '哥伦比亚', time: '10:00', group: 'K组' },
+  ],
+  '2026-06-19': [
+    { id: 'A03', home: '捷克', away: '南非', time: '00:00', group: 'A组' },
+    { id: 'B03', home: '瑞士', away: '波黑', time: '03:00', group: 'B组' },
+    { id: 'B04', home: '加拿大', away: '卡塔尔', time: '06:00', group: 'B组' },
+    { id: 'A04', home: '墨西哥', away: '韩国', time: '09:00', group: 'A组' },
+  ],
+  '2026-06-20': [
+    { id: 'D03', home: '美国', away: '澳大利亚', time: '03:00', group: 'D组' },
+    { id: 'C03', home: '苏格兰', away: '摩洛哥', time: '06:00', group: 'C组' },
+    { id: 'C04', home: '巴西', away: '海地', time: '08:30', group: 'C组' },
+    { id: 'D04', home: '土耳其', away: '巴拉圭', time: '11:00', group: 'D组' },
+  ],
+  '2026-06-21': [
+    { id: 'F03', home: '荷兰', away: '瑞典', time: '01:00', group: 'F组' },
+    { id: 'E03', home: '德国', away: '科特迪瓦', time: '04:00', group: 'E组' },
+    { id: 'E04', home: '厄瓜多尔', away: '库拉索', time: '08:00', group: 'E组' },
+    { id: 'F04', home: '突尼斯', away: '日本', time: '12:00', group: 'F组' },
+  ],
+  '2026-06-22': [
+    { id: 'H03', home: '西班牙', away: '沙特', time: '00:00', group: 'H组' },
+    { id: 'G03', home: '比利时', away: '伊朗', time: '03:00', group: 'G组' },
+    { id: 'H04', home: '乌拉圭', away: '佛得角', time: '06:00', group: 'H组' },
+    { id: 'G04', home: '新西兰', away: '埃及', time: '09:00', group: 'G组' },
+  ],
+  '2026-06-23': [
+    { id: 'J03', home: '阿根廷', away: '奥地利', time: '01:00', group: 'J组' },
+    { id: 'I03', home: '法国', away: '伊拉克', time: '05:00', group: 'I组' },
+    { id: 'I04', home: '挪威', away: '塞内加尔', time: '08:00', group: 'I组' },
+    { id: 'J04', home: '约旦', away: '阿尔及利亚', time: '11:00', group: 'J组' },
+  ],
+  '2026-06-24': [
+    { id: 'K03', home: '葡萄牙', away: '乌兹别克斯坦', time: '01:00', group: 'K组' },
+    { id: 'L03', home: '英格兰', away: '加纳', time: '04:00', group: 'L组' },
+    { id: 'L04', home: '巴拿马', away: '克罗地亚', time: '07:00', group: 'L组' },
+    { id: 'K04', home: '哥伦比亚', away: '刚果(金)', time: '10:00', group: 'K组' },
+  ],
+  '2026-06-25': [
+    { id: 'B05', home: '瑞士', away: '加拿大', time: '03:00', group: 'B组' },
+    { id: 'B06', home: '波黑', away: '卡塔尔', time: '03:00', group: 'B组' },
+    { id: 'C05', home: '苏格兰', away: '巴西', time: '06:00', group: 'C组' },
+    { id: 'C06', home: '摩洛哥', away: '海地', time: '06:00', group: 'C组' },
+    { id: 'A05', home: '捷克', away: '墨西哥', time: '09:00', group: 'A组' },
+    { id: 'A06', home: '南非', away: '韩国', time: '09:00', group: 'A组' },
+  ],
+  '2026-06-26': [
+    { id: 'E05', home: '库拉索', away: '科特迪瓦', time: '04:00', group: 'E组' },
+    { id: 'E06', home: '厄瓜多尔', away: '德国', time: '04:00', group: 'E组' },
+    { id: 'F05', home: '日本', away: '瑞典', time: '07:00', group: 'F组' },
+    { id: 'F06', home: '突尼斯', away: '荷兰', time: '07:00', group: 'F组' },
+    { id: 'D05', home: '土耳其', away: '美国', time: '10:00', group: 'D组' },
+    { id: 'D06', home: '巴拉圭', away: '澳大利亚', time: '10:00', group: 'D组' },
+  ],
+  '2026-06-27': [
+    { id: 'I05', home: '挪威', away: '法国', time: '03:00', group: 'I组' },
+    { id: 'I06', home: '塞内加尔', away: '伊拉克', time: '03:00', group: 'I组' },
+    { id: 'L05', home: '巴拿马', away: '英格兰', time: '05:00', group: 'L组' },
+    { id: 'L06', home: '克罗地亚', away: '加纳', time: '05:00', group: 'L组' },
+    { id: 'H05', home: '佛得角', away: '沙特', time: '08:00', group: 'H组' },
+    { id: 'H06', home: '乌拉圭', away: '西班牙', time: '08:00', group: 'H组' },
+    { id: 'G05', home: '埃及', away: '伊朗', time: '11:00', group: 'G组' },
+    { id: 'G06', home: '新西兰', away: '比利时', time: '11:00', group: 'G组' },
+  ],
+  '2026-06-28': [
+    { id: 'K05', home: '哥伦比亚', away: '葡萄牙', time: '07:30', group: 'K组' },
+    { id: 'K06', home: '刚果(金)', away: '乌兹别克斯坦', time: '07:30', group: 'K组' },
+    { id: 'J05', home: '阿尔及利亚', away: '奥地利', time: '10:00', group: 'J组' },
+    { id: 'J06', home: '约旦', away: '阿根廷', time: '10:00', group: 'J组' },
+  ],
+};
+
+const FLAGS = {
+  '墨西哥':'🇲🇽','美国':'🇺🇸','加拿大':'🇨🇦','巴西':'🇧🇷','阿根廷':'🇦🇷',
+  '乌拉圭':'🇺🇾','德国':'🇩🇪','法国':'🇫🇷','西班牙':'🇪🇸','葡萄牙':'🇵🇹',
+  '英格兰':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','荷兰':'🇳🇱','比利时':'🇧🇪','克罗地亚':'🇭🇷',
+  '日本':'🇯🇵','韩国':'🇰🇷','澳大利亚':'🇦🇺','沙特':'🇸🇦','伊朗':'🇮🇷',
+  '喀麦隆':'🇨🇲','塞尔维亚':'🇷🇸','加纳':'🇬🇭','瑞士':'🇨🇭',
+  '丹麦':'🇩🇰','波兰':'🇵🇱','摩洛哥':'🇲🇦','塞内加尔':'🇸🇳',
+  '厄瓜多尔':'🇪🇨','哥伦比亚':'🇨🇴','尼日利亚':'🇳🇬',
+  '埃及':'🇪🇬','突尼斯':'🇹🇳','南非':'🇿🇦','捷克':'🇨🇿',
+  '波黑':'🇧🇦','卡塔尔':'🇶🇦','海地':'🇭🇹','苏格兰':'🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+  '巴拉圭':'🇵🇾','土耳其':'🇹🇷','库拉索':'🇨🇼','科特迪瓦':'🇨🇮',
+  '瑞典':'🇸🇪','新西兰':'🇳🇿','佛得角':'🇨🇻',
+  '伊拉克':'🇮🇶','挪威':'🇳🇴','阿尔及利亚':'🇩🇿','奥地利':'🇦🇹','约旦':'🇯🇴',
+  '刚果(金)':'🇨🇩','乌兹别克斯坦':'🇺🇿','巴拿马':'🇵🇦',
+};
+
+// ============ 状态 ============
+const API = '';
+
+function getToday() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function getNowBeijing() {
+  // 返回北京时间的 Date 对象（用 UTC+8 偏移）
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + 8 * 3600000);
+}
+
+function getScheduleDates() {
+  return Object.keys(SCHEDULE).sort();
+}
+
+// 判断某天第一场是否已开赛（北京时间）
+function isDayLocked(date) {
+  const matches = SCHEDULE[date];
+  if (!matches || !matches.length) return false;
+  const firstTime = matches[0].time; // "03:00"
+  const [h, m] = firstTime.split(':').map(Number);
+  const now = getNowBeijing();
+  const kickoff = new Date(date + 'T00:00:00');
+  kickoff.setHours(h, m, 0, 0);
+  return now >= kickoff;
+}
+
+// 判断某天最后一场是否已结束（开赛+2小时算结束）
+function isDayFinished(date) {
+  const matches = SCHEDULE[date];
+  if (!matches || !matches.length) return false;
+  const lastTime = matches[matches.length - 1].time;
+  const [h, m] = lastTime.split(':').map(Number);
+  const now = getNowBeijing();
+  const endApprox = new Date(date + 'T00:00:00');
+  endApprox.setHours(h + 2, m, 0, 0);
+  return now >= endApprox;
+}
+
+// 竞猜面板应该显示哪天的比赛
+function findPredictDate() {
+  const today = getToday();
+  const dates = getScheduleDates();
+
+  // 如果今天有比赛且还没结束（包括进行中），显示今天
+  if (SCHEDULE[today] && !isDayFinished(today)) return today;
+
+  // 今天的结束了，找下一个有比赛的日期
+  for (const d of dates) {
+    if (d > today) return d;
+  }
+  return dates[dates.length - 1];
+}
+
+let currentDate = findPredictDate();
+let historyDate = currentDate;
+
+// ============ 时间转换：北京时间 → 本地时间 ============
+function bjTimeToLocal(date, bjTime) {
+  const [h, m] = bjTime.split(':').map(Number);
+  // 构造UTC时间：北京时间 - 8小时 = UTC
+  const utc = new Date(date + 'T00:00:00Z');
+  utc.setUTCHours(h - 8, m, 0, 0);
+  // 转为本地时间显示
+  return utc.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// ============ 昵称快选 ============
+function renderNickChips() {
+  const container = document.getElementById('nick-chips');
+  container.innerHTML = MEMBERS.map(name =>
+    `<span class="nick-chip" data-name="${name}">${name}</span>`
+  ).join('');
+
+  container.querySelectorAll('.nick-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('nickname').value = chip.dataset.name;
+      container.querySelectorAll('.nick-chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      localStorage.setItem('wc_nickname', chip.dataset.name);
+      // 清空所有输入框再加载该用户的预测
+      const matches = SCHEDULE[currentDate] || [];
+      for (const m of matches) {
+        const hEl = document.getElementById(`h_${m.id}`);
+        const aEl = document.getElementById(`a_${m.id}`);
+        if (hEl) hEl.value = '';
+        if (aEl) aEl.value = '';
+      }
+      document.getElementById('submitted-info').innerHTML = '';
+      loadMyPredictions();
+    });
+  });
+}
+
+// ============ API调用 ============
+async function apiPost(path, body) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+async function apiGet(path) {
+  const res = await fetch(API + path);
+  return res.json();
+}
+
+// ============ 竞猜面板 ============
+function renderMatches() {
+  const matches = SCHEDULE[currentDate] || [];
+  const container = document.getElementById('matches-list');
+  const deadlineEl = document.getElementById('deadline-note');
+  const submitBtn = document.getElementById('submit-btn');
+  const locked = isDayLocked(currentDate);
+
+  if (!matches.length) {
+    const nextDate = findPredictDate();
+    container.innerHTML = `<div class="card no-match-today">
+      <p>今天没有比赛</p>
+      <p class="next-date" onclick="jumpToDate('${nextDate}')">跳转到 ${nextDate} →</p>
+    </div>`;
+    deadlineEl.textContent = '';
+    submitBtn.style.display = 'none';
+    return;
+  }
+
+  if (locked) {
+    // 当天已开赛但还没结束：显示锁定 + 比赛进行中
+    const finished = isDayFinished(currentDate);
+    if (finished) {
+      // 应该不会到这里（findPredictDate会跳到下一天），但保险起见
+      deadlineEl.innerHTML = `<span style="color:#4CAF50;">✅ ${currentDate} 比赛已结束，请查看战报</span>`;
+    } else {
+      deadlineEl.innerHTML = `<span style="color:#e94560;">🔒 ${currentDate} 已开赛，预测已锁定</span><br><span style="font-size:11px;color:#888;">比赛结束后将开放下一天预测</span>`;
+    }
+    submitBtn.style.display = 'none';
+  } else {
+    // 计算倒计时目标：当天第一场开赛（北京时间转UTC）
+    const bjTime = matches[0].time;
+    const [bh, bm] = bjTime.split(':').map(Number);
+    // 北京时间 = UTC+8，所以 UTC = 北京 - 8
+    const kickoffUTC = new Date(currentDate + 'T00:00:00Z');
+    kickoffUTC.setUTCHours(bh - 8, bm, 0, 0);
+    window._kickoffUTC = kickoffUTC;
+    deadlineEl.innerHTML = `📅 ${currentDate} · ⏰ <span id="countdown"></span>`;
+    submitBtn.style.display = 'block';
+    updateCountdown();
+  }
+
+  const disabledAttr = locked ? 'disabled style="opacity:0.5;"' : '';
+  container.innerHTML = matches.map(m => {
+    const hf = FLAGS[m.home] || '';
+    const af = FLAGS[m.away] || '';
+    const localTime = bjTimeToLocal(currentDate, m.time);
+    return `
+    <div class="card match-card" id="card-${m.id}">
+      <div class="match-header">
+        <span>${m.group}</span>
+        <span>${localTime} 开球</span>
+      </div>
+      <div class="match-teams">
+        <span class="team-name team-left">${hf} ${m.home}</span>
+        <span class="vs">VS</span>
+        <span class="team-name team-right">${m.away} ${af}</span>
+      </div>
+      <div class="score-input">
+        <input type="number" inputmode="numeric" min="0" max="20" id="h_${m.id}" ${disabledAttr} />
+        <span class="colon">:</span>
+        <input type="number" inputmode="numeric" min="0" max="20" id="a_${m.id}" ${disabledAttr} />
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function jumpToDate(date) {
+  currentDate = date;
+  renderMatches();
+}
+
+async function loadMyPredictions() {
+  const nickname = document.getElementById('nickname').value.trim();
+  if (!nickname) return;
+
+  try {
+    const data = await apiGet(`/api/predictions?date=${currentDate}`);
+    if (data[nickname]) {
+      const matches = SCHEDULE[currentDate] || [];
+      for (const m of matches) {
+        const pred = data[nickname][m.id];
+        if (pred) {
+          const hEl = document.getElementById(`h_${m.id}`);
+          const aEl = document.getElementById(`a_${m.id}`);
+          if (hEl) hEl.value = pred.home;
+          if (aEl) aEl.value = pred.away;
+        }
+      }
+      document.getElementById('submitted-info').innerHTML =
+        '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
+    }
+  } catch (e) {}
+}
+
+document.getElementById('submit-btn').addEventListener('click', async () => {
+  const nickname = document.getElementById('nickname').value.trim();
+  if (!nickname) { showToast('请先选择你的昵称', true); return; }
+
+  const matches = SCHEDULE[currentDate] || [];
+  if (!matches.length) { showToast('当天没有比赛', true); return; }
+
+  const predictions = {};
+  for (const m of matches) {
+    const h = document.getElementById(`h_${m.id}`).value;
+    const a = document.getElementById(`a_${m.id}`).value;
+    if (h === '' || a === '') {
+      showToast(`请填写 ${m.home} vs ${m.away}`, true);
+      return;
+    }
+    predictions[m.id] = { home: parseInt(h), away: parseInt(a) };
+  }
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = '提交中...';
+
+  try {
+    const res = await apiPost('/api/predict', { nickname, date: currentDate, predictions });
+    if (res.ok) {
+      showToast('✅ 提交成功！');
+      localStorage.setItem('wc_nickname', nickname);
+      document.getElementById('submitted-info').innerHTML =
+        '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
+    } else {
+      showToast(res.error || '提交失败', true);
+    }
+  } catch (e) {
+    const key = `wc_pred_${currentDate}_${nickname}`;
+    localStorage.setItem(key, JSON.stringify(predictions));
+    localStorage.setItem('wc_nickname', nickname);
+    showToast('✅ 已保存到本地（离线模式）');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '提交预测';
+});
+
+// ============ 排行榜（总排行）============
+async function renderLeaderboard() {
+  const container = document.getElementById('lb-list');
+
+  // 从API获取数据，如果没有则用预加载的初始数据
+  let data = [];
+  try {
+    data = await apiGet('/api/leaderboard');
+  } catch (e) {}
+
+  // 没有API数据时，显示所有成员初始排行
+  if (!data || !data.length) {
+    data = MEMBERS.map((name, i) => ({
+      rank: 1, nickname: name, earnings: 0, days: 0, wins: 0
+    }));
+  }
+
+  const totalPool = data.reduce((sum, item) => sum + (item.cost || 0), 0);
+
+  let header = `<div style="text-align:center;margin-bottom:14px;">
+    <div style="font-size:11px;color:#888;margin-bottom:4px;">累计奖池</div>
+    <div style="font-size:28px;font-weight:bold;background:linear-gradient(135deg,#f5a623,#e94560);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">¥${totalPool}</div>
+    <div style="font-size:11px;color:#666;margin-top:4px;">${data[0]?.days || 0}天已结算 · ${MEMBERS.length}人参与</div>
+  </div>
+  <div style="height:1px;background:linear-gradient(90deg,transparent,#e94560,transparent);margin-bottom:12px;"></div>`;
+
+  const medals = ['🥇', '🥈', '🥉'];
+  const rankBgs = ['linear-gradient(135deg,#f5a623,#ffda6b)', 'linear-gradient(135deg,#c0c0c0,#e8e8e8)', 'linear-gradient(135deg,#cd7f32,#e8a860)'];
+
+  container.innerHTML = header + data.map((item, i) => {
+    const net = item.earnings - (item.cost || 0);
+    const netStr = net >= 0 ? `+${net}` : `${net}`;
+    const netColor = net >= 0 ? '#4CAF50' : '#e94560';
+    const isTop3 = item.rank <= 3;
+    const medal = isTop3 ? medals[item.rank - 1] : '';
+    const rankStyle = isTop3
+      ? `background:${rankBgs[item.rank-1]};color:#000;font-size:14px;`
+      : '';
+
+    return `
+    <div class="lb-item" style="${isTop3 ? 'padding:12px 0;' : ''}">
+      <div class="lb-rank" style="${rankStyle}">${medal || item.rank}</div>
+      <div class="lb-name">
+        ${item.nickname}
+        <br><span style="font-size:11px;color:#666;">
+          ${item.days > 0 ? `${item.days}天 · 🥇×${item.wins||0}` : '等待开赛...'}
+        </span>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:16px;font-weight:bold;color:#f5a623;">¥${item.earnings}</div>
+        ${item.days > 0 ? `<div style="font-size:11px;color:${netColor};">${netStr}</div>` : '<div style="font-size:11px;color:#666;">—</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ============ 战报 ============
+async function renderHistory() {
+  document.getElementById('history-date').textContent = historyDate;
+  const container = document.getElementById('history-list');
+  const matches = SCHEDULE[historyDate] || [];
+
+  if (!matches.length) {
+    container.innerHTML = '<div class="card"><p style="text-align:center;color:#888;">当天无比赛</p></div>';
+    return;
+  }
+
+  let results = {};
+  let predictions = {};
+  try {
+    const [resData, predData] = await Promise.all([
+      apiGet(`/api/results?date=${historyDate}`),
+      apiGet(`/api/predictions?date=${historyDate}`)
+    ]);
+    for (const r of (resData || [])) {
+      results[r.match_id] = { home: r.home_score, away: r.away_score };
+    }
+    predictions = predData || {};
+  } catch (e) {}
+
+  const hasResults = Object.keys(results).length > 0;
+
+
+  // 比赛比分卡片
+  let html = matches.map(m => {
+    const hf = FLAGS[m.home] || '';
+    const af = FLAGS[m.away] || '';
+    const actual = results[m.id];
+    let actualStr = '';
+    if (actual) {
+      actualStr = `${actual.home} : ${actual.away}`;
+    } else {
+      // 根据比赛时间判断状态
+      const [mh, mm] = m.time.split(':').map(Number);
+      const now = getNowBeijing();
+      const kickoff = new Date(historyDate + 'T00:00:00');
+      kickoff.setHours(mh, mm, 0, 0);
+      const endTime = new Date(kickoff.getTime() + 2 * 3600000);
+      if (now < kickoff) {
+        actualStr = '<span style="color:#888;">待开赛</span>';
+      } else if (now < endTime) {
+        actualStr = '<span style="color:#4CAF50;">⚽ 比赛中</span>';
+      } else {
+        actualStr = '<span style="color:#f5a623;">已结束 · 待录入结果</span>';
+      }
+    }
+
+    const predRows = Object.entries(predictions).map(([name, preds]) => {
+      const p = preds[m.id];
+      if (!p) return '';
+      let badge = '';
+      if (actual) {
+        const a = analyzeMatch(p, actual);
+        badge = a.resultCorrect
+          ? '<span class="result-badge badge-2">✅</span>'
+          : '<span class="result-badge badge-0">❌</span>';
+      }
+      return `<div class="pred-row"><span>${name}</span><span>${p.home}:${p.away}${badge}</span></div>`;
+    }).join('');
+
+    const localTime = bjTimeToLocal(historyDate, m.time);
+    return `
+    <div class="card">
+      <div class="match-header"><span>${m.group}</span><span>${localTime}</span></div>
+      <div class="match-teams">
+        <span class="team-name team-left">${hf} ${m.home}</span>
+        <span class="vs">VS</span>
+        <span class="team-name team-right">${m.away} ${af}</span>
+      </div>
+      <div class="actual-score">${actualStr}</div>
+      ${predRows ? '<div style="margin-top:8px;border-top:1px solid #0f3460;padding-top:6px;">' + predRows + '</div>' : ''}
+    </div>`;
+  }).join('');
+
+  // 当日排行：有结果则计算真实排名，否则显示全0预加载
+  let rankingHtml = '';
+  if (hasResults && Object.keys(predictions).length > 0) {
+    const dayRanking = Object.entries(predictions).map(([name, preds]) => {
+      const stats = calcDayStats(preds, matches, results);
+      return { nickname: name, ...stats };
+    }).sort(compareStats);
+
+    const ranked = assignRanks(dayRanking);
+    const medals = ['🥇', '🥈', '🥉'];
+    const prizes = calcPrizes(ranked.length, matches.length);
+
+    rankingHtml = `<div class="card">
+      <div style="font-size:13px;font-weight:bold;margin-bottom:4px;color:#f5a623;">📊 当日排名</div>
+      <div style="font-size:11px;color:#888;margin-bottom:8px;">${ranked.length}人 × ${matches.length}场 × ¥5 = 奖池 ¥${prizes.pool}</div>
+      ${ranked.map(r => {
+        const medal = r.rank <= 3 ? medals[r.rank-1] : `${r.rank}.`;
+        const prize = prizes[r.rank] || 0;
+        return `<div class="lb-item" style="padding:6px 0;">
+          <span style="width:24px;">${medal}</span>
+          <span class="lb-name">${r.nickname}</span>
+          <span style="font-size:11px;color:#888;margin-right:8px;">✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}</span>
+          ${prize ? `<span style="color:#f5a623;font-weight:bold;">+¥${prize}</span>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  } else {
+    rankingHtml = `<div class="card">
+      <div style="font-size:13px;font-weight:bold;margin-bottom:8px;color:#f5a623;">📊 当日排名</div>
+      ${MEMBERS.map(name => `<div class="lb-item" style="padding:6px 0;">
+        <span style="width:24px;text-align:center;">—</span>
+        <span class="lb-name">${name}</span>
+        <span style="font-size:11px;color:#888;">✅0场 · 净0 · 球0</span>
+      </div>`).join('')}
+      <div style="text-align:center;margin-top:8px;font-size:11px;color:#666;">比赛结果录入后自动计算</div>
+    </div>`;
+  }
+
+  container.innerHTML = html + rankingHtml;
+}
+
+function changeDate(delta) {
+  const dates = getScheduleDates();
+  const idx = dates.indexOf(historyDate);
+  const newIdx = idx + delta;
+  if (newIdx >= 0 && newIdx < dates.length) {
+    historyDate = dates[newIdx];
+    renderHistory();
+  }
+}
+
+// 单场分析：胜负是否对、净胜球偏差、进球偏差（逐队）
+function analyzeMatch(pred, actual) {
+  const pH = pred.home, pA = pred.away;
+  const aH = actual.home, aA = actual.away;
+  const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+  const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+  const resultCorrect = pR === aR;
+  const gdDiff = Math.abs((pH - pA) - (aH - aA));
+  const goalDiff = Math.abs(pH - aH) + Math.abs(pA - aA);
+  return { resultCorrect, gdDiff, goalDiff };
+}
+
+// 计算一个人某天所有场次的汇总指标
+function calcDayStats(userPreds, matches, results) {
+  let correct = 0, gdTotal = 0, goalTotal = 0;
+  let details = [];
+  for (const m of matches) {
+    const pred = userPreds[m.id];
+    const actual = results[m.id];
+    if (!pred || !actual) continue;
+    const a = analyzeMatch(pred, actual);
+    if (a.resultCorrect) correct++;
+    gdTotal += a.gdDiff;
+    goalTotal += a.goalDiff;
+    details.push({ match: m, pred, actual, ...a });
+  }
+  return { correct, gdTotal, goalTotal, details };
+}
+
+// 排名比较：correct多赢，gdTotal小赢，goalTotal小赢
+function compareStats(a, b) {
+  if (a.correct !== b.correct) return b.correct - a.correct;
+  if (a.gdTotal !== b.gdTotal) return a.gdTotal - b.gdTotal;
+  return a.goalTotal - b.goalTotal;
+}
+
+// 给排名列表分配名次（处理并列）
+function assignRanks(sorted) {
+  const ranked = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let rank = i + 1;
+    if (i > 0 && compareStats(sorted[i], sorted[i-1]) === 0) {
+      rank = ranked[i-1].rank;
+    }
+    ranked.push({ ...sorted[i], rank });
+  }
+  return ranked;
+}
+
+// 奖金计算：每人每场5元，奖池=参与人数×5×场次
+function calcPrizes(numPlayers, numMatches) {
+  const pool = numPlayers * 5 * numMatches;
+  return { 1: Math.round(pool * 0.6), 2: Math.round(pool * 0.3), 3: Math.round(pool * 0.1), pool };
+}
+
+// ============ 倒计时 ============
+function updateCountdown() {
+  const el = document.getElementById('countdown');
+  if (!el || !window._kickoffUTC) return;
+  const now = new Date();
+  const diff = window._kickoffUTC - now;
+  if (diff <= 0) {
+    el.textContent = '已开赛';
+    el.style.color = '#e94560';
+    return;
+  }
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor((diff % 86400000) / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  let str = '';
+  if (d > 0) str += `${d}天 `;
+  str += `${h}时${m}分${s}秒`;
+  el.textContent = `距截止 ${str}`;
+}
+setInterval(updateCountdown, 1000);
+
+// ============ TABS ============
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.panel).classList.add('active');
+
+    if (tab.dataset.panel === 'leaderboard') renderLeaderboard();
+    if (tab.dataset.panel === 'history') renderHistory();
+    if (tab.dataset.panel === 'admin') renderAdminMatches();
+  });
+});
+
+// ============ 管理员面板 ============
+let adminDate = findPredictDate();
+
+function renderAdminMatches() {
+  document.getElementById('admin-date').textContent = adminDate;
+  const matches = SCHEDULE[adminDate] || [];
+  const container = document.getElementById('admin-matches');
+
+  if (!matches.length) {
+    container.innerHTML = '<p style="text-align:center;color:#888;">当天无比赛</p>';
+    return;
+  }
+
+  container.innerHTML = matches.map(m => {
+    const hf = FLAGS[m.home] || '';
+    const af = FLAGS[m.away] || '';
+    return `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #0f3460;">
+      <span style="font-size:13px;flex:1;">${hf}${m.home}</span>
+      <input type="number" inputmode="numeric" min="0" max="20" id="rh_${m.id}" style="width:40px;height:34px;text-align:center;font-size:16px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
+      <span style="margin:0 4px;color:#888;">:</span>
+      <input type="number" inputmode="numeric" min="0" max="20" id="ra_${m.id}" style="width:40px;height:34px;text-align:center;font-size:16px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
+      <span style="font-size:13px;flex:1;text-align:right;">${m.away}${af}</span>
+    </div>`;
+  }).join('');
+
+  loadExistingResults();
+}
+
+async function loadExistingResults() {
+  try {
+    const data = await apiGet(`/api/results?date=${adminDate}`);
+    for (const r of (data || [])) {
+      const hEl = document.getElementById(`rh_${r.match_id}`);
+      const aEl = document.getElementById(`ra_${r.match_id}`);
+      if (hEl) hEl.value = r.home_score;
+      if (aEl) aEl.value = r.away_score;
+    }
+  } catch (e) {}
+}
+
+function changeAdminDate(delta) {
+  const dates = getScheduleDates();
+  const idx = dates.indexOf(adminDate);
+  const newIdx = idx + delta;
+  if (newIdx >= 0 && newIdx < dates.length) {
+    adminDate = dates[newIdx];
+    renderAdminMatches();
+  }
+}
+
+async function submitResults() {
+  const password = document.getElementById('admin-pass').value;
+  if (!password) { showToast('请输入管理员密码', true); return; }
+
+  const matches = SCHEDULE[adminDate] || [];
+  const btn = document.getElementById('admin-submit-btn');
+  btn.disabled = true;
+  btn.textContent = '录入中...';
+
+  let success = 0;
+  for (const m of matches) {
+    const h = document.getElementById(`rh_${m.id}`).value;
+    const a = document.getElementById(`ra_${m.id}`).value;
+    if (h === '' || a === '') continue;
+
+    try {
+      const res = await apiPost('/api/result', {
+        password,
+        match_id: m.id,
+        date: adminDate,
+        home_score: parseInt(h),
+        away_score: parseInt(a)
+      });
+      if (res.ok) success++;
+      else if (res.error === '密码错误') {
+        showToast('密码错误', true);
+        btn.disabled = false;
+        btn.textContent = '录入结果';
+        return;
+      }
+    } catch (e) {}
+  }
+
+  showToast(`✅ 已录入 ${success} 场结果`);
+  btn.disabled = false;
+  btn.textContent = '录入结果';
+}
+
+// ============ TOAST ============
+function showToast(msg, isError) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (isError ? ' error' : '');
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 2500);
+}
+
+// ============ INIT ============
+renderNickChips();
+const saved = localStorage.getItem('wc_nickname');
+if (saved) {
+  document.getElementById('nickname').value = saved;
+  document.querySelectorAll('.nick-chip').forEach(c => {
+    if (c.dataset.name === saved) c.classList.add('selected');
+  });
+}
+renderMatches();
+if (saved) setTimeout(loadMyPredictions, 500);
+</script>
+</body>
+</html>

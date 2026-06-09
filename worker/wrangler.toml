@@ -1,0 +1,22 @@
+name = "worldcup-predict"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+workers_dev = true
+routes = [
+  { pattern = "wc-guess-2026.com", custom_domain = true },
+  { pattern = "www.wc-guess-2026.com", custom_domain = true }
+]
+
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+FOOTBALL_API_TOKEN = "6a4ad18e3d4e4403ac2461e0fe98e53e"
+
+[site]
+bucket = "./public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "worldcup"
+database_id = "f2d78b74-1150-40f0-986f-314fc6f70fe0"
