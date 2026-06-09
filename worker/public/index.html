@@ -67,6 +67,8 @@ h1 {
 }
 .nick-chip:active { transform: scale(0.95); }
 .nick-chip.selected { background: #e94560; border-color: #e94560; font-weight: bold; }
+.nick-chip.submitted { border-color: #4CAF50; color: #4CAF50; }
+.nick-chip.selected.submitted { background: #e94560; border-color: #e94560; color: #fff; }
 .btn {
   padding: 14px 20px; background: linear-gradient(135deg, #e94560, #f5a623);
   border: none; border-radius: 8px; color: #fff;
@@ -186,7 +188,6 @@ h1 {
   <div class="panel active" id="predict">
     <input type="hidden" id="nickname" />
     <div class="nick-chips" id="nick-chips"></div>
-    <div id="group-status"></div>
     <div class="deadline-note" id="deadline-note"></div>
     <div id="ai-prompt-card"></div>
     <div id="matches-list"></div>
@@ -541,22 +542,17 @@ async function renderMatches() {
   let oddsData = {};
   try { oddsData = await apiGet('/api/odds'); } catch(e) {}
 
-  // 加载群提交状态
+  // 用 pill 颜色标记谁已提交
   try {
     const preds = await apiGet(`/api/predictions?date=${currentDate}`);
     const submitted = Object.keys(preds || {});
-    const notYet = MEMBERS.filter(m => !submitted.includes(m));
-
-    if (submitted.length > 0 || notYet.length > 0) {
-      const submittedStr = submitted.length > 0
-        ? `<span style="color:#4CAF50;">✅ ${submitted.join('、')}</span>` : '';
-      const notYetStr = notYet.length > 0
-        ? `<span style="color:#888;">⏳ ${notYet.join('、')}</span>` : '';
-      document.getElementById('group-status').innerHTML = `<div class="card" style="padding:10px 14px;font-size:12px;">
-        <div>${submittedStr}</div>
-        ${notYetStr ? `<div style="margin-top:4px;">${notYetStr}</div>` : ''}
-      </div>`;
-    }
+    document.querySelectorAll('.nick-chip').forEach(chip => {
+      if (submitted.includes(chip.dataset.name)) {
+        chip.classList.add('submitted');
+      } else {
+        chip.classList.remove('submitted');
+      }
+    });
   } catch(e) {}
 
   const matchCardsHtml = matches.map(m => {
