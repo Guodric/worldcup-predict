@@ -120,6 +120,25 @@ h1 {
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 .toast.error { background: #e94560; }
+/* Confetti animation */
+.confetti-container {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none; z-index: 1000; overflow: hidden;
+}
+.confetti {
+  position: absolute; top: -10px;
+  width: 10px; height: 10px; border-radius: 2px;
+  animation: confetti-fall 2.5s ease-out forwards;
+}
+@keyframes confetti-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+/* Rank change arrows */
+.rank-change { font-size: 11px; margin-left: 4px; }
+.rank-up { color: #4CAF50; }
+.rank-down { color: #e94560; }
+.rank-same { color: #666; }
 .match-card { position: relative; }
 .no-match-today { text-align: center; color: #888; padding: 20px 0; }
 .no-match-today .next-date { color: #f5a623; cursor: pointer; text-decoration: underline; margin-top: 8px; font-size: 13px; }
@@ -615,6 +634,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
     const res = await apiPost('/api/predict', { nickname, date: currentDate, predictions });
     if (res.ok) {
       showToast('✅ 提交成功！');
+      launchConfetti();
       localStorage.setItem('wc_nickname', nickname);
       document.getElementById('submitted-info').innerHTML =
         '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
@@ -778,15 +798,47 @@ async function renderHistory() {
     const medals = ['🥇', '🥈', '🥉'];
     const prizes = calcPrizes(ranked.length, matches.length);
 
+    // 获取前一天排名用于箭头对比
+    let prevRanks = {};
+    const allDates = getScheduleDates();
+    const dateIdx = allDates.indexOf(historyDate);
+    if (dateIdx > 0) {
+      const prevDate = allDates[dateIdx - 1];
+      try {
+        const [prevRes, prevPred] = await Promise.all([
+          apiGet(`/api/results?date=${prevDate}`),
+          apiGet(`/api/predictions?date=${prevDate}`)
+        ]);
+        const prevResults = {};
+        for (const r of (prevRes || [])) prevResults[r.match_id] = { home: r.home_score, away: r.away_score };
+        if (Object.keys(prevResults).length > 0 && prevPred) {
+          const prevMatches = SCHEDULE[prevDate] || [];
+          const prevRanking = Object.entries(prevPred).map(([name, preds]) => {
+            const stats = calcDayStats(preds, prevMatches, prevResults);
+            return { nickname: name, ...stats };
+          }).sort(compareStats);
+          const prevAssigned = assignRanks(prevRanking);
+          for (const r of prevAssigned) prevRanks[r.nickname] = r.rank;
+        }
+      } catch(e) {}
+    }
+
     rankingHtml = `<div class="card">
       <div style="font-size:13px;font-weight:bold;margin-bottom:4px;color:#f5a623;">📊 当日排名</div>
       <div style="font-size:11px;color:#888;margin-bottom:8px;">${ranked.length}人 × ${matches.length}场 × ¥5 = 奖池 ¥${prizes.pool}</div>
       ${ranked.map(r => {
         const medal = r.rank <= 3 ? medals[r.rank-1] : `${r.rank}.`;
         const prize = prizes[r.rank] || 0;
+        let arrow = '';
+        const prev = prevRanks[r.nickname];
+        if (prev) {
+          if (r.rank < prev) arrow = `<span class="rank-change rank-up">↑${prev - r.rank}</span>`;
+          else if (r.rank > prev) arrow = `<span class="rank-change rank-down">↓${r.rank - prev}</span>`;
+          else arrow = `<span class="rank-change rank-same">-</span>`;
+        }
         return `<div class="lb-item" style="padding:6px 0;">
           <span style="width:24px;">${medal}</span>
-          <span class="lb-name">${r.nickname}</span>
+          <span class="lb-name">${r.nickname}${arrow}</span>
           <span style="font-size:11px;color:#888;margin-right:8px;">✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}</span>
           ${prize ? `<span style="color:#f5a623;font-weight:bold;">+¥${prize}</span>` : ''}
         </div>`;
@@ -1057,6 +1109,28 @@ async function renderAchievements() {
   }
 
   container.innerHTML = html;
+}
+
+// ============ Confetti ============
+function launchConfetti() {
+  const container = document.createElement('div');
+  container.className = 'confetti-container';
+  document.body.appendChild(container);
+
+  const colors = ['#e94560', '#f5a623', '#4CAF50', '#2196F3', '#9C27B0', '#fff'];
+  for (let i = 0; i < 60; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti';
+    piece.style.left = Math.random() * 100 + '%';
+    piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDelay = Math.random() * 0.8 + 's';
+    piece.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+    piece.style.width = (6 + Math.random() * 8) + 'px';
+    piece.style.height = (6 + Math.random() * 8) + 'px';
+    container.appendChild(piece);
+  }
+
+  setTimeout(() => container.remove(), 4000);
 }
 
 // ============ 倒计时 ============

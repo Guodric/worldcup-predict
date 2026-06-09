@@ -341,6 +341,15 @@ async function handleAPI(url, request, env) {
       );
 
       await env.DB.batch(batch);
+
+      // 审计日志
+      const ip = request.headers.get('cf-connecting-ip') || '';
+      const ua = request.headers.get('user-agent') || '';
+      const detail = JSON.stringify(predictions);
+      await env.DB.prepare(
+        'INSERT INTO audit_log (nickname, match_date, action, detail, ip, ua) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(nickname, date, 'predict', detail, ip, ua).run();
+
       return json({ ok: true, count: batch.length }, 200, headers);
     }
 
