@@ -186,8 +186,9 @@ h1 {
   <div class="panel active" id="predict">
     <input type="hidden" id="nickname" />
     <div class="nick-chips" id="nick-chips"></div>
+    <div id="group-status"></div>
     <div class="deadline-note" id="deadline-note"></div>
-    <div id="submitted-info"></div>
+    <div id="ai-prompt-card"></div>
     <div id="matches-list"></div>
     <button class="btn" id="submit-btn">提交预测</button>
   </div>
@@ -470,16 +471,9 @@ function renderNickChips() {
       container.querySelectorAll('.nick-chip').forEach(c => c.classList.remove('selected'));
       chip.classList.add('selected');
       localStorage.setItem('wc_nickname', chip.dataset.name);
-      // 清空所有输入框再加载该用户的预测
-      const matches = SCHEDULE[currentDate] || [];
-      for (const m of matches) {
-        const hEl = document.getElementById(`h_${m.id}`);
-        const aEl = document.getElementById(`a_${m.id}`);
-        if (hEl) hEl.value = '';
-        if (aEl) aEl.value = '';
-      }
-      document.getElementById('submitted-info').innerHTML = '';
-      loadMyPredictions();
+      document.getElementById('nickname').value = chip.dataset.name;
+      renderMatches();
+      setTimeout(loadMyPredictions, 300);
     });
   });
 }
@@ -543,11 +537,29 @@ async function renderMatches() {
 
   const disabledAttr = locked ? 'disabled style="opacity:0.5;"' : '';
 
-  // 加载赔率
+  // 加载赔率和预测状态
   let oddsData = {};
   try { oddsData = await apiGet('/api/odds'); } catch(e) {}
 
-  container.innerHTML = matches.map(m => {
+  // 加载群提交状态
+  try {
+    const preds = await apiGet(`/api/predictions?date=${currentDate}`);
+    const submitted = Object.keys(preds || {});
+    const notYet = MEMBERS.filter(m => !submitted.includes(m));
+
+    if (submitted.length > 0 || notYet.length > 0) {
+      const submittedStr = submitted.length > 0
+        ? `<span style="color:#4CAF50;">✅ ${submitted.join('、')}</span>` : '';
+      const notYetStr = notYet.length > 0
+        ? `<span style="color:#888;">⏳ ${notYet.join('、')}</span>` : '';
+      document.getElementById('group-status').innerHTML = `<div class="card" style="padding:10px 14px;font-size:12px;">
+        <div>${submittedStr}</div>
+        ${notYetStr ? `<div style="margin-top:4px;">${notYetStr}</div>` : ''}
+      </div>`;
+    }
+  } catch(e) {}
+
+  const matchCardsHtml = matches.map(m => {
     const hf = FLAGS[m.home] || '';
     const af = FLAGS[m.away] || '';
     const localTime = bjTimeToLocal(currentDate, m.time);
@@ -578,6 +590,19 @@ async function renderMatches() {
       </div>
     </div>`;
   }).join('');
+
+  // my-status: 个人提交状态，放在AI引导和比赛卡片之间
+  let myStatusHtml = '';
+  const myNick = document.getElementById('nickname').value.trim();
+  try {
+    const preds = await apiGet(`/api/predictions?date=${currentDate}`);
+    const submitted = Object.keys(preds || {});
+    if (myNick && submitted.includes(myNick)) {
+      myStatusHtml = '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
+    }
+  } catch(e) {}
+
+  container.innerHTML = myStatusHtml + matchCardsHtml;
 }
 
 function jumpToDate(date) {
@@ -602,8 +627,6 @@ async function loadMyPredictions() {
           if (aEl) aEl.value = pred.away;
         }
       }
-      document.getElementById('submitted-info').innerHTML =
-        '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
     }
   } catch (e) {}
 }
@@ -636,8 +659,7 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
       showToast('✅ 提交成功！');
       launchConfetti();
       localStorage.setItem('wc_nickname', nickname);
-      document.getElementById('submitted-info').innerHTML =
-        '<div class="submitted-badge">✅ 已提交，修改后可重新提交</div>';
+      renderMatches();
     } else {
       showToast(res.error || '提交失败', true);
     }
@@ -861,14 +883,17 @@ async function renderHistory() {
   try {
     const sumData = await apiGet(`/api/summary?date=${historyDate}`);
     if (sumData.summary) {
-      summaryHtml = `<div class="card" style="border:1px solid #f5a623;">
-        <div style="font-size:12px;color:#f5a623;margin-bottom:6px;">🤖 AI 点评</div>
+      const isFinal = sumData.is_final;
+      const label = isFinal ? '🤖 AI 最终点评' : '🤖 AI 赛前点评（实时更新中）';
+      const borderColor = isFinal ? '#f5a623' : '#667eea';
+      summaryHtml = `<div class="card" style="border:1px solid ${borderColor};">
+        <div style="font-size:12px;color:${borderColor};margin-bottom:6px;">${label}</div>
         <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary}</div>
       </div>`;
     }
   } catch(e) {}
 
-  container.innerHTML = html + rankingHtml + summaryHtml;
+  container.innerHTML = html + summaryHtml + rankingHtml;
 }
 
 function changeDate(delta) {
@@ -1111,6 +1136,29 @@ async function renderAchievements() {
   container.innerHTML = html;
 }
 
+// ============ AI Prompt (加载一次) ============
+async function loadAIPrompt() {
+  const el = document.getElementById('ai-prompt-card');
+  if (!el) return;
+  el.innerHTML = `<div class="card" style="padding:10px 14px;border:1px solid #667eea;">
+    <div style="font-size:12px;color:#ddd;" id="ai-prompt-text">加载中...</div>
+  </div>`;
+  try {
+    const promptData = await apiGet(`/api/match-prompt?date=${currentDate}`);
+    const textEl = document.getElementById('ai-prompt-text');
+    if (!textEl) return;
+    if (promptData.prompt) {
+      textEl.textContent = promptData.prompt;
+    } else {
+      const matches = SCHEDULE[currentDate] || [];
+      textEl.textContent = `今日${matches.length}场对决，快来预测吧！`;
+    }
+  } catch(e) {
+    const textEl = document.getElementById('ai-prompt-text');
+    if (textEl) textEl.textContent = '快来预测吧！';
+  }
+}
+
 // ============ Confetti ============
 function launchConfetti() {
   const container = document.createElement('div');
@@ -1293,6 +1341,7 @@ if (saved) {
   });
 }
 renderMatches();
+loadAIPrompt();
 if (saved) setTimeout(loadMyPredictions, 500);
 </script>
 </body>

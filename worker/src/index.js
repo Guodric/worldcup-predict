@@ -98,6 +98,7 @@ export default {
     await fetchAndStoreResults(env);
     await fetchAndStoreOdds(env);
     await generateDaySummary(env);
+    await generateMatchPrompt(env);
   }
 };
 
@@ -204,27 +205,34 @@ async function fetchAndStoreOdds(env) {
 }
 
 async function generateDaySummary(env) {
-  // 找到北京时间"今天"的日期
-  const now = new Date();
-  const bjNow = new Date(now.getTime() + 8 * 3600000);
-  const today = bjNow.toISOString().split('T')[0];
+  // 检查所有有预测的比赛日（不只是今天）
+  const { results: predDates } = await env.DB.prepare(
+    'SELECT DISTINCT match_date FROM predictions ORDER BY match_date'
+  ).all();
 
-  // 检查今天是否已有总结
-  const existing = await env.DB.prepare('SELECT 1 FROM summaries WHERE match_date = ?').bind(today).first();
-  if (existing) return;
+  for (const row of (predDates || [])) {
+    await generateSummaryForDate(env, row.match_date);
+  }
+}
 
-  // 检查今天是否有比赛结果
-  const { results: todayResults } = await env.DB.prepare(
-    'SELECT * FROM results WHERE match_date = ?'
-  ).bind(today).all();
-  if (!todayResults || todayResults.length === 0) return;
-
-  // 检查今天有多少场比赛应该有（通过 FIRST_MATCH_TIME 判断是否是比赛日）
+async function generateSummaryForDate(env, today) {
   if (!FIRST_MATCH_TIME[today]) return;
 
-  // 获取今天所有预测
+  // 检查是否已有最终总结（锁定的不再更新）
+  const existing = await env.DB.prepare(
+    'SELECT is_final FROM summaries WHERE match_date = ?'
+  ).bind(today).first();
+  if (existing?.is_final) return;
+
+  // 获取今天的预测
   const { results: todayPreds } = await env.DB.prepare(
     'SELECT * FROM predictions WHERE match_date = ?'
+  ).bind(today).all();
+  if (!todayPreds || todayPreds.length === 0) return;
+
+  // 获取今天的比赛结果（可能还没有）
+  const { results: todayResults } = await env.DB.prepare(
+    'SELECT * FROM results WHERE match_date = ?'
   ).bind(today).all();
 
   // 获取赔率
@@ -232,45 +240,99 @@ async function generateDaySummary(env) {
   const oddsMap = {};
   for (const r of oddsRows) oddsMap[r.match_id] = { home: r.home_odds, draw: r.draw_odds, away: r.away_odds };
 
-  // 构建每人的成绩
   const userPreds = {};
   for (const p of todayPreds) {
     if (!userPreds[p.nickname]) userPreds[p.nickname] = [];
     userPreds[p.nickname].push(p);
   }
 
+  const hasResults = todayResults && todayResults.length > 0;
   const resultMap = {};
-  for (const r of todayResults) resultMap[r.match_id] = r;
-
-  let statsText = `今日比赛结果:\n`;
-  for (const r of todayResults) {
-    statsText += `${r.match_id}: ${r.home_score}:${r.away_score}\n`;
+  if (hasResults) {
+    for (const r of todayResults) resultMap[r.match_id] = r;
   }
 
-  statsText += `\n各选手表现:\n`;
-  for (const [name, preds] of Object.entries(userPreds)) {
-    let correct = 0, exactHits = 0;
-    const predDetails = [];
-    for (const p of preds) {
-      const actual = resultMap[p.match_id];
-      if (!actual) continue;
-      const pR = p.home_score > p.away_score ? 'W' : p.home_score < p.away_score ? 'L' : 'D';
-      const aR = actual.home_score > actual.away_score ? 'W' : actual.home_score < actual.away_score ? 'L' : 'D';
-      const isCorrect = pR === aR;
-      if (isCorrect) correct++;
-      if (p.home_score === actual.home_score && p.away_score === actual.away_score) exactHits++;
-      predDetails.push(`预测${p.home_score}:${p.away_score} 实际${actual.home_score}:${actual.away_score} ${isCorrect ? '✅' : '❌'}`);
+  // 判断是否开赛
+  const now = new Date();
+  const [kickH, kickM] = FIRST_MATCH_TIME[today].split(':').map(Number);
+  const kickoff = new Date(today + 'T00:00:00Z');
+  kickoff.setUTCHours(kickH - 8, kickM, 0, 0);
+  const isPreMatch = now < kickoff;
+
+  let prompt, isFinal;
+
+  if (hasResults) {
+    // ===== 阶段3：赛后最终总结 =====
+    let statsText = `今日比赛结果:\n`;
+    for (const r of todayResults) {
+      statsText += `${r.match_id}: ${r.home_score}:${r.away_score}\n`;
     }
-    statsText += `${name}: ${correct}/${preds.length}场对 ${exactHits}次精确命中 [${predDetails.join(', ')}]\n`;
-  }
+    statsText += `\n各选手表现:\n`;
+    for (const [name, preds] of Object.entries(userPreds)) {
+      let correct = 0, exactHits = 0;
+      const predDetails = [];
+      for (const p of preds) {
+        const actual = resultMap[p.match_id];
+        if (!actual) continue;
+        const pR = p.home_score > p.away_score ? 'W' : p.home_score < p.away_score ? 'L' : 'D';
+        const aR = actual.home_score > actual.away_score ? 'W' : actual.home_score < actual.away_score ? 'L' : 'D';
+        const isCorrect = pR === aR;
+        if (isCorrect) correct++;
+        if (p.home_score === actual.home_score && p.away_score === actual.away_score) exactHits++;
+        predDetails.push(`预测${p.home_score}:${p.away_score} 实际${actual.home_score}:${actual.away_score} ${isCorrect ? '✅' : '❌'}`);
+      }
+      statsText += `${name}: ${correct}/${preds.length}场对 ${exactHits}次精确命中 [${predDetails.join(', ')}]\n`;
+    }
 
-  // 调用 Workers AI 生成点评
-  const prompt = `你是世界杯竞猜群的解说员。根据数据写一句话总结（50字以内），幽默、点名、有梗。不要markdown。
+    prompt = `你是世界杯竞猜群的解说员。比赛已结束，根据数据写最终总结（50字以内），幽默、点名、有梗。不要markdown。
 
 例子：球王今日双杀精确命中封神，林彪连续三天垫底建议改名林摆。
 
 ${statsText}`;
+    isFinal = 1;
 
+  } else if (isPreMatch) {
+    // ===== 阶段1：赛前滚动总结 =====
+    const participants = Object.keys(userPreds);
+    let statsText = `已提交预测的人: ${participants.join('、')} (共${participants.length}人)\n\n`;
+
+    // 统计大家的预测倾向
+    const matchPreds = {};
+    for (const [name, preds] of Object.entries(userPreds)) {
+      for (const p of preds) {
+        if (!matchPreds[p.match_id]) matchPreds[p.match_id] = [];
+        const result = p.home_score > p.away_score ? '主胜' : p.home_score < p.away_score ? '客胜' : '平局';
+        matchPreds[p.match_id].push({ name, pred: `${p.home_score}:${p.away_score}`, result });
+      }
+    }
+
+    for (const [matchId, preds] of Object.entries(matchPreds)) {
+      const homeWin = preds.filter(p => p.result === '主胜').length;
+      const draw = preds.filter(p => p.result === '平局').length;
+      const awayWin = preds.filter(p => p.result === '客胜').length;
+      statsText += `${matchId}: ${homeWin}人主胜/${draw}人平/${awayWin}人客胜\n`;
+      const outliers = preds.filter(p => {
+        const majority = homeWin >= draw && homeWin >= awayWin ? '主胜' : awayWin >= draw ? '客胜' : '平局';
+        return p.result !== majority;
+      });
+      if (outliers.length > 0 && outliers.length < preds.length) {
+        statsText += `  独行侠: ${outliers.map(o => `${o.name}(${o.pred})`).join(', ')}\n`;
+      }
+    }
+
+    prompt = `你是世界杯竞猜群的解说员。比赛还没开始，根据大家的预测写一句话点评（50字以内），调侃独行侠、指出分歧最大的比赛。轻松有趣。不要markdown。
+
+例子：全员看好墨西哥，就佩雷兹一个人猜冷门客胜，要么封神要么社死。
+
+${statsText}`;
+    isFinal = 0;
+
+  } else {
+    // ===== 阶段2：比赛中，不生成 =====
+    return;
+  }
+
+  // 调用 AI
   try {
     const aiRes = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
       messages: [{ role: 'user', content: prompt }],
@@ -279,12 +341,82 @@ ${statsText}`;
 
     const summary = aiRes.response || '';
     if (summary.length > 10) {
+      // Upsert: 赛前总结可覆盖，赛后锁定
       await env.DB.prepare(
-        'INSERT INTO summaries (match_date, content) VALUES (?, ?)'
-      ).bind(today, summary).run();
+        `INSERT INTO summaries (match_date, content, is_final)
+         VALUES (?, ?, ?)
+         ON CONFLICT(match_date) DO UPDATE SET content=excluded.content, is_final=excluded.is_final, created_at=datetime('now')`
+      ).bind(today, summary, isFinal).run();
     }
   } catch (e) {
     // AI 调用失败，静默忽略
+  }
+}
+
+async function generateMatchPrompt(env) {
+  // 为即将到来的比赛日生成引导性AI文案
+  const { results: oddsRows } = await env.DB.prepare('SELECT * FROM odds').all();
+  const oddsMap = {};
+  for (const r of oddsRows) oddsMap[r.match_id] = { home: r.home_odds, draw: r.draw_odds, away: r.away_odds };
+
+  // 找到下一个有比赛但还没开赛的日期
+  const now = new Date();
+  const allDates = Object.keys(FIRST_MATCH_TIME).sort();
+
+  for (const date of allDates) {
+    const [kickH, kickM] = FIRST_MATCH_TIME[date].split(':').map(Number);
+    const kickoff = new Date(date + 'T00:00:00Z');
+    kickoff.setUTCHours(kickH - 8, kickM, 0, 0);
+    if (now >= kickoff) continue; // 已开赛，跳过
+
+    // 检查是否已有今天的prompt
+    const existing = await env.DB.prepare(
+      'SELECT 1 FROM match_prompts WHERE match_date = ?'
+    ).bind(date).first();
+    if (existing) return; // 已有，不重复生成
+
+    // 构建比赛信息
+    const { results: preds } = await env.DB.prepare(
+      'SELECT DISTINCT match_id FROM predictions WHERE match_date = ?'
+    ).bind(date).all();
+    const matchIds = preds.map(p => p.match_id);
+
+    // 用 MATCH_LOOKUP 反查比赛信息
+    const matchInfo = [];
+    for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
+      if (!key.endsWith(date)) continue;
+      const parts = key.replace(`-${date}`, '').split('-');
+      const home = parts[0];
+      const away = parts.slice(1).join('-');
+      const odds = oddsMap[mid];
+      const oddsStr = odds ? `赔率 主${odds.home} 平${odds.draw} 客${odds.away}` : '';
+      matchInfo.push(`${home} vs ${away} ${oddsStr}`);
+    }
+
+    if (matchInfo.length === 0) return;
+
+    const prompt = `你是世界杯竞猜群的主持人。根据今天的比赛和赔率，写一段引导性文案（50字以内），激发大家来竞猜。提到具体比赛、赔率亮点或看点。语气兴奋有煽动性。不要markdown。
+
+例子：墨西哥1.42碾压级赔率遇上非洲黑马，韩国捷克五五开谁敢猜平局？快来下注！
+
+今日比赛:
+${matchInfo.join('\n')}`;
+
+    try {
+      const aiRes = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+      });
+
+      const content = aiRes.response || '';
+      if (content.length > 10) {
+        await env.DB.prepare(
+          'INSERT INTO match_prompts (match_date, content) VALUES (?, ?)'
+        ).bind(date, content).run();
+      }
+    } catch (e) {}
+
+    return; // 只生成最近一天的
   }
 }
 
@@ -478,6 +610,7 @@ async function handleAPI(url, request, env) {
       await fetchAndStoreResults(env);
       await fetchAndStoreOdds(env);
       await generateDaySummary(env);
+      await generateMatchPrompt(env);
       return json({ ok: true, msg: '同步完成' }, 200, headers);
     }
 
@@ -513,12 +646,20 @@ async function handleAPI(url, request, env) {
       return json(results, 200, headers);
     }
 
+    // GET /api/match-prompt?date=2026-06-12
+    if (url.pathname === '/api/match-prompt' && request.method === 'GET') {
+      const date = url.searchParams.get('date');
+      if (!date) return json({ error: '需要date参数' }, 400, headers);
+      const row = await env.DB.prepare('SELECT content FROM match_prompts WHERE match_date = ?').bind(date).first();
+      return json({ prompt: row?.content || null }, 200, headers);
+    }
+
     // GET /api/summary?date=2026-06-12
     if (url.pathname === '/api/summary' && request.method === 'GET') {
       const date = url.searchParams.get('date');
       if (!date) return json({ error: '需要date参数' }, 400, headers);
-      const row = await env.DB.prepare('SELECT content FROM summaries WHERE match_date = ?').bind(date).first();
-      return json({ summary: row?.content || null }, 200, headers);
+      const row = await env.DB.prepare('SELECT content, is_final FROM summaries WHERE match_date = ?').bind(date).first();
+      return json({ summary: row?.content || null, is_final: row?.is_final || 0 }, 200, headers);
     }
 
     // GET /api/odds?date=2026-06-12
