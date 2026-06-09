@@ -124,17 +124,44 @@ h1 {
 .no-match-today { text-align: center; color: #888; padding: 20px 0; }
 .no-match-today .next-date { color: #f5a623; cursor: pointer; text-decoration: underline; margin-top: 8px; font-size: 13px; }
 .day-ranking { font-size: 12px; }
+.hamburger {
+  font-size: 28px; padding: 4px 0; cursor: pointer;
+  color: #eee; user-select: none;
+}
+.menu-overlay {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5); z-index: 98;
+}
+.menu-overlay.open { display: block; }
+.menu-drawer {
+  display: none; position: fixed; top: 0; right: 0; bottom: 0;
+  width: 180px; background: #16213e; z-index: 99;
+  padding: 60px 16px 16px; box-shadow: -4px 0 12px rgba(0,0,0,0.3);
+}
+.menu-drawer.open { display: block; }
+.menu-item {
+  padding: 14px 12px; font-size: 15px; cursor: pointer;
+  border-bottom: 1px solid #0f3460; transition: background 0.2s;
+}
+.menu-item:active { background: #0f3460; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>⚽ 世界杯竞猜 2026</h1>
+  <div style="display:flex;align-items:center;justify-content:space-between;">
+    <h1 style="flex:1;">⚽ 世界杯竞猜 2026</h1>
+    <div class="hamburger" onclick="toggleMenu()">☰</div>
+  </div>
   <div class="tabs">
     <div class="tab active" data-panel="predict">竞猜</div>
     <div class="tab" data-panel="leaderboard">排行</div>
     <div class="tab" data-panel="history">战报</div>
-    <div class="tab" data-panel="rules">规则</div>
-    <div class="tab" data-panel="admin">管理</div>
+  </div>
+  <div class="menu-overlay" id="menu-overlay" onclick="toggleMenu()"></div>
+  <div class="menu-drawer" id="menu-drawer">
+    <div class="menu-item" data-panel="achievements">🏅 成就</div>
+    <div class="menu-item" data-panel="rules">📋 规则</div>
+    <div class="menu-item" data-panel="admin">🔒 管理</div>
   </div>
 
   <div class="panel active" id="predict">
@@ -159,6 +186,10 @@ h1 {
       <button onclick="changeDate(1)">▶</button>
     </div>
     <div id="history-list"></div>
+  </div>
+
+  <div class="panel" id="achievements">
+    <div id="achievements-list"><p style="text-align:center;color:#888;">加载中...</p></div>
   </div>
 
   <div class="panel" id="rules">
@@ -450,7 +481,7 @@ async function apiGet(path) {
 }
 
 // ============ 竞猜面板 ============
-function renderMatches() {
+async function renderMatches() {
   const matches = SCHEDULE[currentDate] || [];
   const container = document.getElementById('matches-list');
   const deadlineEl = document.getElementById('deadline-note');
@@ -492,10 +523,23 @@ function renderMatches() {
   }
 
   const disabledAttr = locked ? 'disabled style="opacity:0.5;"' : '';
+
+  // 加载赔率
+  let oddsData = {};
+  try { oddsData = await apiGet('/api/odds'); } catch(e) {}
+
   container.innerHTML = matches.map(m => {
     const hf = FLAGS[m.home] || '';
     const af = FLAGS[m.away] || '';
     const localTime = bjTimeToLocal(currentDate, m.time);
+    const odds = oddsData[m.id];
+    const oddsHtml = odds
+      ? `<div style="display:flex;justify-content:center;gap:12px;margin:8px 0 14px;font-size:11px;color:#888;">
+          <span>主 <b style="color:#4CAF50;">${odds.home.toFixed(2)}</b></span>
+          <span>平 <b style="color:#f5a623;">${odds.draw.toFixed(2)}</b></span>
+          <span>客 <b style="color:#e94560;">${odds.away.toFixed(2)}</b></span>
+        </div>`
+      : '';
     return `
     <div class="card match-card" id="card-${m.id}">
       <div class="match-header">
@@ -507,6 +551,7 @@ function renderMatches() {
         <span class="vs">VS</span>
         <span class="team-name team-right">${m.away} ${af}</span>
       </div>
+      ${oddsHtml}
       <div class="score-input">
         <input type="number" inputmode="numeric" min="0" max="20" id="h_${m.id}" ${disabledAttr} />
         <span class="colon">:</span>
@@ -759,7 +804,19 @@ async function renderHistory() {
     </div>`;
   }
 
-  container.innerHTML = html + rankingHtml;
+  // AI 点评
+  let summaryHtml = '';
+  try {
+    const sumData = await apiGet(`/api/summary?date=${historyDate}`);
+    if (sumData.summary) {
+      summaryHtml = `<div class="card" style="border:1px solid #f5a623;">
+        <div style="font-size:12px;color:#f5a623;margin-bottom:6px;">🤖 AI 点评</div>
+        <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary}</div>
+      </div>`;
+    }
+  } catch(e) {}
+
+  container.innerHTML = html + rankingHtml + summaryHtml;
 }
 
 function changeDate(delta) {
@@ -827,6 +884,181 @@ function calcPrizes(numPlayers, numMatches) {
   return { 1: Math.round(pool * 0.6), 2: Math.round(pool * 0.3), 3: Math.round(pool * 0.1), pool };
 }
 
+// ============ 成就系统 ============
+const ACHIEVEMENT_DEFS = [
+  { id: 'sniper', icon: '🎯', name: '神射手', desc: '精确命中比分3次', check: (s) => s.exactHits >= 3, progress: (s) => `${s.exactHits}/3` },
+  { id: 'sniper3', icon: '🎯🎯🎯', name: '精确制导', desc: '精确命中累计5次', check: (s) => s.exactHits >= 5, progress: (s) => `${s.exactHits}/5` },
+  { id: 'streak3', icon: '🔥', name: '三连稳', desc: '连续3天进入前三', check: (s) => s.maxTop3Streak >= 3, progress: (s) => `连续${s.maxTop3Streak}天前三` },
+  { id: 'streak5', icon: '🔥🔥', name: '五连稳', desc: '连续5天进入前三', check: (s) => s.maxTop3Streak >= 5, progress: (s) => `连续${s.maxTop3Streak}天前三` },
+  { id: 'perfect_day', icon: '👑', name: '全知全能', desc: '单日全部猜对胜负', check: (s) => s.perfectDays > 0, progress: (s) => `${s.perfectDays}天全对` },
+  { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '猜中3场冷门(赔率>3.0)', check: (s) => s.upsetHits >= 3, progress: (s) => `${s.upsetHits}/3` },
+  { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日全部猜错胜负', check: (s) => s.zeroDays > 0, progress: (s) => `${s.zeroDays}天全错` },
+  { id: 'reverse', icon: '📉', name: '反向指标', desc: '连续3天垫底', check: (s) => s.maxLastStreak >= 3, progress: (s) => `连续${s.maxLastStreak}天垫底` },
+  { id: 'champion3', icon: '🏆', name: '三冠王', desc: '累计3次日冠军', check: (s) => s.wins >= 3, progress: (s) => `${s.wins}/3冠` },
+  { id: 'draw_master', icon: '🤝', name: '和棋大师', desc: '猜中5次平局', check: (s) => s.drawHits >= 5, progress: (s) => `${s.drawHits}/5` },
+];
+
+async function renderAchievements() {
+  const container = document.getElementById('achievements-list');
+  let allPreds = {}, allResults = {};
+
+  try {
+    // 拉取所有有结果的日期数据
+    const dates = getScheduleDates();
+    for (const date of dates) {
+      const [resData, predData] = await Promise.all([
+        apiGet(`/api/results?date=${date}`),
+        apiGet(`/api/predictions?date=${date}`)
+      ]);
+      if (resData && resData.length > 0) {
+        for (const r of resData) {
+          allResults[r.match_id] = { home: r.home_score, away: r.away_score, date: r.match_date };
+        }
+        if (predData && Object.keys(predData).length > 0) {
+          for (const [name, preds] of Object.entries(predData)) {
+            if (!allPreds[name]) allPreds[name] = {};
+            Object.assign(allPreds[name], preds);
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  if (Object.keys(allResults).length === 0) {
+    container.innerHTML = '<div class="card"><p style="text-align:center;color:#888;">比赛开始后解锁成就</p></div>';
+    return;
+  }
+
+  // 获取排行榜数据（wins）和赔率
+  let lbData = [];
+  try { lbData = await apiGet('/api/leaderboard'); } catch(e) {}
+  const winsMap = {};
+  for (const item of lbData) winsMap[item.nickname] = item.wins || 0;
+
+  let oddsData = {};
+  try { oddsData = await apiGet('/api/odds'); } catch(e) {}
+
+  // 计算每人的统计数据
+  // 先算每天每人的排名
+  const dailyRanks = {};  // { date: { name: rank } }
+  const dates = getScheduleDates();
+  for (const date of dates) {
+    const matches = SCHEDULE[date] || [];
+    const dayHasResults = matches.some(m => allResults[m.id]);
+    if (!dayHasResults) continue;
+
+    const dayUsers = [];
+    for (const name of MEMBERS) {
+      const preds = allPreds[name] || {};
+      let correct = 0, gdTotal = 0, goalTotal = 0, participated = false;
+      for (const m of matches) {
+        const pred = preds[m.id];
+        const actual = allResults[m.id];
+        if (!pred || !actual) continue;
+        participated = true;
+        const a = analyzeMatch(pred, actual);
+        if (a.resultCorrect) correct++;
+        gdTotal += a.gdDiff;
+        goalTotal += a.goalDiff;
+      }
+      if (participated) dayUsers.push({ nickname: name, correct, gdTotal, goalTotal });
+    }
+
+    dayUsers.sort(compareStats);
+    const ranked = assignRanks(dayUsers);
+    dailyRanks[date] = {};
+    for (const r of ranked) {
+      dailyRanks[date][r.nickname] = r.rank;
+    }
+  }
+
+  const memberStats = {};
+  for (const name of MEMBERS) {
+    const preds = allPreds[name] || {};
+    let exactHits = 0, maxWrongStreak = 0, curWrongStreak = 0;
+    let perfectDays = 0, zeroDays = 0, upsetHits = 0, drawHits = 0;
+    let maxTop3Streak = 0, curTop3Streak = 0;
+    let maxLastStreak = 0, curLastStreak = 0;
+
+    for (const date of dates) {
+      const matches = SCHEDULE[date] || [];
+      let dayCorrect = 0, dayTotal = 0;
+      for (const m of matches) {
+        const pred = preds[m.id];
+        const actual = allResults[m.id];
+        if (!pred || !actual) continue;
+        dayTotal++;
+        const a = analyzeMatch(pred, actual);
+
+        if (pred.home === actual.home && pred.away === actual.away) exactHits++;
+        if (a.resultCorrect) {
+          dayCorrect++;
+          curWrongStreak = 0;
+          const aR = actual.home === actual.away ? 'D' : '';
+          const pR = pred.home === pred.away ? 'D' : '';
+          if (aR === 'D' && pR === 'D') drawHits++;
+          // 冷门猎手：猜对的结果赔率>3.0
+          const odds = oddsData[m.id];
+          if (odds) {
+            const actualResult = actual.home > actual.away ? 'home' : actual.home < actual.away ? 'away' : 'draw';
+            const winningOdds = odds[actualResult];
+            if (winningOdds && winningOdds >= 3.0) upsetHits++;
+          }
+        } else {
+          curWrongStreak++;
+          if (curWrongStreak > maxWrongStreak) maxWrongStreak = curWrongStreak;
+        }
+      }
+      if (dayTotal > 0 && dayCorrect === dayTotal) perfectDays++;
+      if (dayTotal > 0 && dayCorrect === 0) zeroDays++;
+
+      // 连续前三/垫底计算
+      const rank = dailyRanks[date]?.[name];
+      const numInDay = Object.keys(dailyRanks[date] || {}).length;
+      if (rank && rank <= 3) {
+        curTop3Streak++;
+        curLastStreak = 0;
+        if (curTop3Streak > maxTop3Streak) maxTop3Streak = curTop3Streak;
+      } else if (rank && rank === numInDay && numInDay > 1) {
+        curLastStreak++;
+        curTop3Streak = 0;
+        if (curLastStreak > maxLastStreak) maxLastStreak = curLastStreak;
+      } else if (rank) {
+        curTop3Streak = 0;
+        curLastStreak = 0;
+      }
+    }
+
+    memberStats[name] = {
+      exactHits, maxTop3Streak, maxLastStreak, maxWrongStreak, perfectDays, zeroDays,
+      upsetHits, drawHits, wins: winsMap[name] || 0
+    };
+  }
+
+  // 渲染成就列表
+  let html = '';
+  for (const ach of ACHIEVEMENT_DEFS) {
+    const earners = MEMBERS.filter(name => ach.check(memberStats[name]));
+    const locked = earners.length === 0;
+
+    html += `<div class="card" style="opacity:${locked ? '0.5' : '1'};">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:24px;">${ach.icon}</span>
+        <div style="flex:1;">
+          <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+          <div style="font-size:11px;color:#888;">${ach.desc}</div>
+        </div>
+        ${locked ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+      </div>
+      ${earners.length > 0 ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+        ${earners.map(name => `<span style="display:inline-block;padding:3px 8px;margin:2px;background:#0f3460;border-radius:10px;font-size:11px;">${name} <span style="color:#f5a623;">${ach.progress(memberStats[name])}</span></span>`).join('')}
+      </div>` : ''}
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
 // ============ 倒计时 ============
 function updateCountdown() {
   const el = document.getElementById('countdown');
@@ -849,19 +1081,35 @@ function updateCountdown() {
 }
 setInterval(updateCountdown, 1000);
 
-// ============ TABS ============
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(tab.dataset.panel).classList.add('active');
+// ============ TABS & MENU ============
+function switchPanel(panelId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const tab = document.querySelector(`.tab[data-panel="${panelId}"]`);
+  if (tab) tab.classList.add('active');
+  document.getElementById(panelId).classList.add('active');
 
-    if (tab.dataset.panel === 'leaderboard') renderLeaderboard();
-    if (tab.dataset.panel === 'history') renderHistory();
-    if (tab.dataset.panel === 'admin') renderAdminMatches();
+  if (panelId === 'leaderboard') renderLeaderboard();
+  if (panelId === 'history') renderHistory();
+  if (panelId === 'achievements') renderAchievements();
+  if (panelId === 'admin') renderAdminMatches();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => switchPanel(tab.dataset.panel));
+});
+
+document.querySelectorAll('.menu-item').forEach(item => {
+  item.addEventListener('click', () => {
+    switchPanel(item.dataset.panel);
+    toggleMenu();
   });
 });
+
+function toggleMenu() {
+  document.getElementById('menu-overlay').classList.toggle('open');
+  document.getElementById('menu-drawer').classList.toggle('open');
+}
 
 // ============ 管理员面板 ============
 let adminDate = findPredictDate();

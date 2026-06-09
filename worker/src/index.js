@@ -93,9 +93,11 @@ export default {
     }
   },
 
-  // Cron Trigger: 每小时自动拉取比赛结果
+  // Cron Trigger: 每小时自动拉取比赛结果、赔率，并生成AI点评
   async scheduled(event, env, ctx) {
     await fetchAndStoreResults(env);
+    await fetchAndStoreOdds(env);
+    await generateDaySummary(env);
   }
 };
 
@@ -132,6 +134,157 @@ async function fetchAndStoreResults(env) {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, updated_at=datetime('now')`
     ).bind(matchId, dateStr, homeScore, awayScore).run();
+  }
+}
+
+// the-odds-api 队名 → 中文队名映射
+const ODDS_TEAM_MAP = {
+  'Mexico': '墨西哥', 'South Africa': '南非', 'South Korea': '韩国',
+  'Czech Republic': '捷克', 'Canada': '加拿大', 'Bosnia & Herzegovina': '波黑',
+  'Bosnia and Herzegovina': '波黑', 'Qatar': '卡塔尔', 'Switzerland': '瑞士',
+  'United States': '美国', 'USA': '美国', 'Paraguay': '巴拉圭',
+  'Brazil': '巴西', 'Morocco': '摩洛哥', 'Haiti': '海地', 'Scotland': '苏格兰',
+  'Australia': '澳大利亚', 'Turkey': '土耳其', 'Germany': '德国', 'Curaçao': '库拉索',
+  'Curacao': '库拉索', 'Netherlands': '荷兰', 'Japan': '日本',
+  'Ivory Coast': '科特迪瓦', "Côte d'Ivoire": '科特迪瓦', 'Ecuador': '厄瓜多尔',
+  'Sweden': '瑞典', 'Tunisia': '突尼斯', 'Spain': '西班牙',
+  'Cape Verde': '佛得角', 'Cape Verde Islands': '佛得角',
+  'Belgium': '比利时', 'Egypt': '埃及', 'Saudi Arabia': '沙特',
+  'Uruguay': '乌拉圭', 'Iran': '伊朗', 'New Zealand': '新西兰',
+  'France': '法国', 'Senegal': '塞内加尔', 'Iraq': '伊拉克', 'Norway': '挪威',
+  'Argentina': '阿根廷', 'Algeria': '阿尔及利亚', 'Austria': '奥地利', 'Jordan': '约旦',
+  'Portugal': '葡萄牙', 'DR Congo': '刚果(金)', 'Congo DR': '刚果(金)',
+  'Uzbekistan': '乌兹别克斯坦', 'Colombia': '哥伦比亚',
+  'England': '英格兰', 'Croatia': '克罗地亚', 'Ghana': '加纳', 'Panama': '巴拿马',
+};
+
+async function fetchAndStoreOdds(env) {
+  const ODDS_KEY = env.ODDS_API_TOKEN || '47f7681ac41ca38a2c024c1928ca9343';
+  const res = await fetch(
+    `https://api.the-odds-api.com/v4/sports/soccer_fifa_world_cup/odds?apiKey=${ODDS_KEY}&regions=eu&markets=h2h&oddsFormat=decimal`
+  );
+  if (!res.ok) return;
+  const data = await res.json();
+  if (!Array.isArray(data)) return;
+
+  for (const match of data) {
+    const homeName = ODDS_TEAM_MAP[match.home_team] || match.home_team;
+    const awayName = ODDS_TEAM_MAP[match.away_team] || match.away_team;
+
+    // 从 commence_time 获取北京日期
+    const utcDate = new Date(match.commence_time);
+    const bjDate = new Date(utcDate.getTime() + 8 * 3600000);
+    const dateStr = bjDate.toISOString().split('T')[0];
+
+    const lookupKey = `${homeName}-${awayName}-${dateStr}`;
+    const matchId = MATCH_LOOKUP[lookupKey];
+    if (!matchId) continue;
+
+    // 取第一个 bookmaker 的赔率
+    const bm = match.bookmakers?.[0];
+    if (!bm) continue;
+    const h2h = bm.markets?.find(m => m.key === 'h2h');
+    if (!h2h) continue;
+
+    const outcomes = {};
+    for (const o of h2h.outcomes) outcomes[o.name] = o.price;
+
+    const homeOdds = outcomes[match.home_team] || null;
+    const drawOdds = outcomes['Draw'] || null;
+    const awayOdds = outcomes[match.away_team] || null;
+
+    if (!homeOdds || !drawOdds || !awayOdds) continue;
+
+    await env.DB.prepare(
+      `INSERT INTO odds (match_id, home_odds, draw_odds, away_odds)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(match_id) DO UPDATE SET home_odds=excluded.home_odds, draw_odds=excluded.draw_odds, away_odds=excluded.away_odds, updated_at=datetime('now')`
+    ).bind(matchId, homeOdds, drawOdds, awayOdds).run();
+  }
+}
+
+async function generateDaySummary(env) {
+  // 找到北京时间"今天"的日期
+  const now = new Date();
+  const bjNow = new Date(now.getTime() + 8 * 3600000);
+  const today = bjNow.toISOString().split('T')[0];
+
+  // 检查今天是否已有总结
+  const existing = await env.DB.prepare('SELECT 1 FROM summaries WHERE match_date = ?').bind(today).first();
+  if (existing) return;
+
+  // 检查今天是否有比赛结果
+  const { results: todayResults } = await env.DB.prepare(
+    'SELECT * FROM results WHERE match_date = ?'
+  ).bind(today).all();
+  if (!todayResults || todayResults.length === 0) return;
+
+  // 检查今天有多少场比赛应该有（通过 FIRST_MATCH_TIME 判断是否是比赛日）
+  if (!FIRST_MATCH_TIME[today]) return;
+
+  // 获取今天所有预测
+  const { results: todayPreds } = await env.DB.prepare(
+    'SELECT * FROM predictions WHERE match_date = ?'
+  ).bind(today).all();
+
+  // 获取赔率
+  const { results: oddsRows } = await env.DB.prepare('SELECT * FROM odds').all();
+  const oddsMap = {};
+  for (const r of oddsRows) oddsMap[r.match_id] = { home: r.home_odds, draw: r.draw_odds, away: r.away_odds };
+
+  // 构建每人的成绩
+  const userPreds = {};
+  for (const p of todayPreds) {
+    if (!userPreds[p.nickname]) userPreds[p.nickname] = [];
+    userPreds[p.nickname].push(p);
+  }
+
+  const resultMap = {};
+  for (const r of todayResults) resultMap[r.match_id] = r;
+
+  let statsText = `今日比赛结果:\n`;
+  for (const r of todayResults) {
+    statsText += `${r.match_id}: ${r.home_score}:${r.away_score}\n`;
+  }
+
+  statsText += `\n各选手表现:\n`;
+  for (const [name, preds] of Object.entries(userPreds)) {
+    let correct = 0, exactHits = 0;
+    const predDetails = [];
+    for (const p of preds) {
+      const actual = resultMap[p.match_id];
+      if (!actual) continue;
+      const pR = p.home_score > p.away_score ? 'W' : p.home_score < p.away_score ? 'L' : 'D';
+      const aR = actual.home_score > actual.away_score ? 'W' : actual.home_score < actual.away_score ? 'L' : 'D';
+      const isCorrect = pR === aR;
+      if (isCorrect) correct++;
+      if (p.home_score === actual.home_score && p.away_score === actual.away_score) exactHits++;
+      predDetails.push(`预测${p.home_score}:${p.away_score} 实际${actual.home_score}:${actual.away_score} ${isCorrect ? '✅' : '❌'}`);
+    }
+    statsText += `${name}: ${correct}/${preds.length}场对 ${exactHits}次精确命中 [${predDetails.join(', ')}]\n`;
+  }
+
+  // 调用 Workers AI 生成点评
+  const prompt = `你是世界杯竞猜群的解说员。根据数据写一句话总结（50字以内），幽默、点名、有梗。不要markdown。
+
+例子：球王今日双杀精确命中封神，林彪连续三天垫底建议改名林摆。
+
+${statsText}`;
+
+  try {
+    const aiRes = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 100,
+    });
+
+    const summary = aiRes.response || '';
+    if (summary.length > 10) {
+      await env.DB.prepare(
+        'INSERT INTO summaries (match_date, content) VALUES (?, ?)'
+      ).bind(today, summary).run();
+    }
+  } catch (e) {
+    // AI 调用失败，静默忽略
   }
 }
 
@@ -307,6 +460,18 @@ async function handleAPI(url, request, env) {
       return json(sorted, 200, headers);
     }
 
+    // POST /api/sync - 手动触发数据同步
+    if (url.pathname === '/api/sync' && request.method === 'POST') {
+      const body = await request.json();
+      if (body.password !== (env.ADMIN_PASSWORD || 'worldcup2026')) {
+        return json({ error: '密码错误' }, 403, headers);
+      }
+      await fetchAndStoreResults(env);
+      await fetchAndStoreOdds(env);
+      await generateDaySummary(env);
+      return json({ ok: true, msg: '同步完成' }, 200, headers);
+    }
+
     // POST /api/result - 管理员录入结果 (简单密码验证)
     if (url.pathname === '/api/result' && request.method === 'POST') {
       const body = await request.json();
@@ -337,6 +502,24 @@ async function handleAPI(url, request, env) {
       }
       const { results } = await stmt.all();
       return json(results, 200, headers);
+    }
+
+    // GET /api/summary?date=2026-06-12
+    if (url.pathname === '/api/summary' && request.method === 'GET') {
+      const date = url.searchParams.get('date');
+      if (!date) return json({ error: '需要date参数' }, 400, headers);
+      const row = await env.DB.prepare('SELECT content FROM summaries WHERE match_date = ?').bind(date).first();
+      return json({ summary: row?.content || null }, 200, headers);
+    }
+
+    // GET /api/odds?date=2026-06-12
+    if (url.pathname === '/api/odds' && request.method === 'GET') {
+      const { results } = await env.DB.prepare('SELECT * FROM odds').all();
+      const oddsMap = {};
+      for (const r of results) {
+        oddsMap[r.match_id] = { home: r.home_odds, draw: r.draw_odds, away: r.away_odds };
+      }
+      return json(oddsMap, 200, headers);
     }
 
     return json({ error: 'Not found' }, 404, headers);
