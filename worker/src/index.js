@@ -259,10 +259,17 @@ async function generateSummaryForDate(env, today) {
   kickoff.setUTCHours(kickH - 8, kickM, 0, 0);
   const isPreMatch = now < kickoff;
 
+  // 计算当天应有多少场比赛（通过 MATCH_LOOKUP 查找）
+  let expectedMatches = 0;
+  for (const [key] of Object.entries(MATCH_LOOKUP)) {
+    if (key.endsWith(today)) expectedMatches++;
+  }
+  const allResultsIn = hasResults && todayResults.length >= expectedMatches;
+
   let prompt, isFinal;
 
-  if (hasResults) {
-    // ===== 阶段3：赛后最终总结 =====
+  if (allResultsIn) {
+    // ===== 阶段3：赛后最终总结（所有比赛结果都录入后）=====
     let statsText = `今日比赛结果:\n`;
     for (const r of todayResults) {
       statsText += `${r.match_id}: ${r.home_score}:${r.away_score}\n`;
@@ -284,7 +291,7 @@ async function generateSummaryForDate(env, today) {
       statsText += `${name}: ${correct}/${preds.length}场对 ${exactHits}次精确命中 [${predDetails.join(', ')}]\n`;
     }
 
-    prompt = `你是世界杯竞猜群的解说员。比赛已结束，根据数据写最终总结（50字以内），幽默、点名、有梗。不要markdown。
+    prompt = `你是世界杯竞猜群的解说员。比赛已结束，根据数据写最终总结（50字以内），幽默、点名、有梗。不要markdown。严格只提到数据中出现的人名，不要编造。
 
 例子：球王今日双杀精确命中封神，林彪连续三天垫底建议改名林摆。
 
@@ -295,6 +302,15 @@ ${statsText}`;
     // ===== 阶段1：赛前滚动总结 =====
     const participants = Object.keys(userPreds);
     let statsText = `已提交预测的人: ${participants.join('、')} (共${participants.length}人)\n\n`;
+
+    // 用 MATCH_LOOKUP 反查队名
+    const matchNames = {};
+    for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
+      if (!key.endsWith(today)) continue;
+      const parts = key.replace(`-${today}`, '');
+      const idx = parts.indexOf('-');
+      matchNames[mid] = { home: parts.substring(0, idx), away: parts.substring(idx + 1) };
+    }
 
     // 统计大家的预测倾向
     const matchPreds = {};
@@ -307,22 +323,20 @@ ${statsText}`;
     }
 
     for (const [matchId, preds] of Object.entries(matchPreds)) {
-      const homeWin = preds.filter(p => p.result === '主胜').length;
-      const draw = preds.filter(p => p.result === '平局').length;
-      const awayWin = preds.filter(p => p.result === '客胜').length;
-      statsText += `${matchId}: ${homeWin}人主胜/${draw}人平/${awayWin}人客胜\n`;
-      const outliers = preds.filter(p => {
-        const majority = homeWin >= draw && homeWin >= awayWin ? '主胜' : awayWin >= draw ? '客胜' : '平局';
-        return p.result !== majority;
-      });
-      if (outliers.length > 0 && outliers.length < preds.length) {
-        statsText += `  独行侠: ${outliers.map(o => `${o.name}(${o.pred})`).join(', ')}\n`;
+      const mn = matchNames[matchId] || { home: '主队', away: '客队' };
+      const odds = oddsMap[matchId];
+      const oddsStr = odds ? `(赔率 主${odds.home} 平${odds.draw} 客${odds.away})` : '';
+      statsText += `${mn.home} vs ${mn.away} ${oddsStr}:\n`;
+      for (const p of preds) {
+        statsText += `  ${p.name}: ${p.pred} (${p.result})\n`;
       }
     }
 
-    prompt = `你是世界杯竞猜群的解说员。比赛还没开始，根据大家的预测写一句话点评（50字以内），调侃独行侠、指出分歧最大的比赛。轻松有趣。不要markdown。
+    prompt = `你是世界杯竞猜群的解说员。根据下面的预测数据写一句话点评（50字以内）。要求：只能提到数据中出现的人名，绝对不能编造或提到没出现在数据中的人。轻松有趣。不要markdown。
 
-例子：全员看好墨西哥，就佩雷兹一个人猜冷门客胜，要么封神要么社死。
+例子1（2人已猜）：林彪和球王都看好主胜，但比分分歧大，林彪激进猜3:1，球王保守2:1。
+例子2（5人已猜）：五人全部押主胜，喂狗独树一帜猜大比分4:0，是自信还是莽撞？
+例子3（3人已猜）：球王、林彪、佩雷兹三人交卷，两人看好主胜一人赌平局，分歧不大。
 
 ${statsText}`;
     isFinal = 0;
@@ -334,7 +348,7 @@ ${statsText}`;
 
   // 调用 AI
   try {
-    const aiRes = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+    const aiRes = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 100,
     });
@@ -403,7 +417,7 @@ async function generateMatchPrompt(env) {
 ${matchInfo.join('\n')}`;
 
     try {
-      const aiRes = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+      const aiRes = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 100,
       });
@@ -527,8 +541,16 @@ async function handleAPI(url, request, env) {
         byDateUser[key].preds.push(p);
       }
 
-      // Get unique dates that have results
-      const datesWithResults = [...new Set(actuals.map(r => r.match_date))];
+      // Get dates where ALL matches have results (not partial)
+      const datesWithSomeResults = [...new Set(actuals.map(r => r.match_date))];
+      const datesWithResults = datesWithSomeResults.filter(date => {
+        let expected = 0;
+        for (const [key] of Object.entries(MATCH_LOOKUP)) {
+          if (key.endsWith(date)) expected++;
+        }
+        const actual = actuals.filter(r => r.match_date === date).length;
+        return actual >= expected;
+      });
 
       // For each date, rank all users
       const earnings = {};
@@ -565,16 +587,21 @@ async function handleAPI(url, request, env) {
         // 奖池 = 参与人数 × 5 × 当日场次
         const numMatches = actuals.filter(r => r.match_date === date).length;
         const pool = dayUsers.length * 5 * numMatches;
-        const prizes = { 1: Math.round(pool * 0.6), 2: Math.round(pool * 0.3), 3: Math.round(pool * 0.1) };
+        const prizeRates = [0.6, 0.3, 0.1]; // 第1/2/3名的分配比例
 
+        // 分配排名
         let rank = 1;
-        for (let i = 0; i < dayUsers.length; i++) {
-          if (i > 0) {
-            const prev = dayUsers[i-1], cur = dayUsers[i];
-            if (cur.correct !== prev.correct || cur.gdTotal !== prev.gdTotal || cur.goalTotal !== prev.goalTotal) {
-              rank = i + 1;
-            }
+        const ranks = [1];
+        for (let i = 1; i < dayUsers.length; i++) {
+          const prev = dayUsers[i-1], cur = dayUsers[i];
+          if (cur.correct !== prev.correct || cur.gdTotal !== prev.gdTotal || cur.goalTotal !== prev.goalTotal) {
+            rank = i + 1;
           }
+          ranks.push(rank);
+        }
+
+        // 并列平分：合并并列位置对应的奖金比例，平均分给并列的人
+        for (let i = 0; i < dayUsers.length; i++) {
           const name = dayUsers[i].nickname;
           if (!earnings[name]) earnings[name] = 0;
           if (!dayCount[name]) dayCount[name] = 0;
@@ -582,8 +609,18 @@ async function handleAPI(url, request, env) {
           if (!totalCost[name]) totalCost[name] = 0;
           dayCount[name]++;
           totalCost[name] += 5 * numMatches;
-          earnings[name] += prizes[rank] || 0;
-          if (rank === 1) winCount[name]++;
+
+          // 找出所有同排名的人数
+          const myRank = ranks[i];
+          const tiedCount = ranks.filter(r => r === myRank).length;
+          // 合并该排名占据的所有位置对应的奖金比例
+          let totalRate = 0;
+          for (let pos = myRank; pos < myRank + tiedCount && pos <= 3; pos++) {
+            totalRate += prizeRates[pos - 1] || 0;
+          }
+          const prize = Math.round((pool * totalRate) / tiedCount);
+          earnings[name] += prize;
+          if (myRank === 1) winCount[name]++;
         }
       }
 

@@ -8,7 +8,7 @@ routes = [
 ]
 
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0,30 * * * *"]
 
 [vars]
 FOOTBALL_API_TOKEN = "6a4ad18e3d4e4403ac2461e0fe98e53e"
