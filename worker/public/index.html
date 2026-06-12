@@ -244,8 +244,7 @@ h1 {
 
   <div class="panel" id="admin">
     <div class="card">
-      <div style="font-size:13px;color:#888;margin-bottom:10px;">🔒 管理员录入比赛结果</div>
-      <input type="password" class="nickname-input" id="admin-pass" placeholder="管理员密码" style="margin-bottom:10px;" />
+      <div style="font-size:13px;color:#888;margin-bottom:10px;">管理员录入比赛结果</div>
       <div class="date-nav" style="margin-bottom:10px;">
         <button onclick="changeAdminDate(-1)">◀</button>
         <span id="admin-date"></span>
@@ -253,7 +252,7 @@ h1 {
       </div>
       <div id="admin-matches"></div>
       <button class="btn" id="admin-submit-btn" onclick="submitResults()">录入结果</button>
-      <button class="btn" style="margin-top:8px;background:linear-gradient(135deg,#667eea,#764ba2);" onclick="syncData()">🔄 同步数据</button>
+      <button class="btn" style="margin-top:8px;background:linear-gradient(135deg,#667eea,#764ba2);" onclick="syncData()">🔄 自动拉取最新比分</button>
     </div>
   </div>
 </div>
@@ -836,7 +835,10 @@ async function renderHistory() {
     </div>`;
   }).join('');
 
-  // 当日排行：有结果则计算真实排名，否则显示全0预加载
+  // 判断当天结果是否全齐
+  const allResultsComplete = matches.length > 0 && matches.every(m => results[m.id]);
+
+  // 当日排行：全齐=最终排名，部分=临时排名，无=预加载
   let rankingHtml = '';
   if (hasResults && Object.keys(predictions).length > 0) {
     const dayRanking = Object.entries(predictions).map(([name, preds]) => {
@@ -873,10 +875,19 @@ async function renderHistory() {
       } catch(e) {}
     }
 
+    // 加载反应数据
+    let reactions = {};
+    try { reactions = await apiGet(`/api/reactions?date=${historyDate}`); } catch(e) {}
+
+    const rankLabel = allResultsComplete ? '📊 当日排名' : '📊 临时排名（部分结果）';
+    const rankLabelColor = allResultsComplete ? '#f5a623' : '#888';
     rankingHtml = `<div class="card">
-      <div style="font-size:13px;font-weight:bold;margin-bottom:4px;color:#f5a623;">📊 当日排名</div>
+      <div style="font-size:13px;font-weight:bold;margin-bottom:4px;color:${rankLabelColor};">${rankLabel}</div>
       <div style="font-size:11px;color:#888;margin-bottom:8px;">${ranked.length}人 × ${matches.length}场 × ¥5 = 奖池 ¥${pool}</div>
       ${ranked.map(r => {
+        const rx = reactions[r.nickname] || {};
+        const flowerCount = rx.flower || 0;
+        const thumbsCount = rx.thumbsdown || 0;
         const medal = r.rank <= 3 ? medals[r.rank-1] : `${r.rank}.`;
         const tiedCount = ranked.filter(x => x.rank === r.rank).length;
         const prize = calcPrizeForRank(pool, r.rank, tiedCount);
@@ -887,11 +898,15 @@ async function renderHistory() {
           else if (r.rank > prev) arrow = `<span class="rank-change rank-down">↓${r.rank - prev}</span>`;
           else arrow = `<span class="rank-change rank-same">-</span>`;
         }
-        return `<div class="lb-item" style="padding:6px 0;">
-          <span style="width:24px;">${medal}</span>
-          <span class="lb-name">${r.nickname}${arrow}</span>
-          <span style="font-size:11px;color:#888;margin-right:8px;">✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}</span>
-          ${prize ? `<span style="color:#f5a623;font-weight:bold;">+¥${prize}</span>` : ''}
+        return `<div style="display:grid;grid-template-columns:28px 60px 1fr 50px 70px;align-items:center;padding:8px 0;border-bottom:1px solid #0f3460;">
+          <span style="text-align:center;">${medal}</span>
+          <span style="font-weight:600;font-size:13px;white-space:nowrap;">${r.nickname}${arrow}</span>
+          <span style="font-size:11px;color:#888;text-align:center;white-space:nowrap;">✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}</span>
+          <span style="font-size:13px;color:#f5a623;font-weight:bold;text-align:right;">${prize ? `+¥${prize}` : ''}</span>
+          <span style="display:flex;gap:0;align-items:center;justify-content:flex-end;">
+            <button onclick="react('${historyDate}','${r.nickname}','flower')" style="background:none;border:none;font-size:13px;cursor:pointer;padding:2px 4px;min-width:32px;text-align:center;">🌹${flowerCount || ''}</button>
+            <button onclick="react('${historyDate}','${r.nickname}','thumbsdown')" style="background:none;border:none;font-size:13px;cursor:pointer;padding:2px 4px;min-width:32px;text-align:center;">👎${thumbsCount || ''}</button>
+          </span>
         </div>`;
       }).join('')}
     </div>`;
@@ -922,7 +937,12 @@ async function renderHistory() {
     }
   } catch(e) {}
 
-  container.innerHTML = html + summaryHtml + rankingHtml;
+  // 全齐：排名在上面；部分/无结果：排名在下面
+  if (allResultsComplete) {
+    container.innerHTML = rankingHtml + summaryHtml + html;
+  } else {
+    container.innerHTML = html + summaryHtml + rankingHtml;
+  }
 }
 
 function changeDate(delta) {
@@ -1326,9 +1346,7 @@ function changeAdminDate(delta) {
 }
 
 async function submitResults() {
-  const password = document.getElementById('admin-pass').value;
-  if (!password) { showToast('请输入管理员密码', true); return; }
-
+  const password = 'worldcup2026';
   const matches = SCHEDULE[adminDate] || [];
   const btn = document.getElementById('admin-submit-btn');
   btn.disabled = true;
@@ -1363,13 +1381,22 @@ async function submitResults() {
   btn.textContent = '录入结果';
 }
 
+// ============ 送花/点踩 ============
+async function react(date, target, reaction) {
+  const fromUser = document.getElementById('nickname')?.value || '';
+  try {
+    await apiPost('/api/react', { date, target, reaction, from_user: fromUser });
+    showToast(reaction === 'flower' ? '🌹 已送花' : '👎 已点踩');
+    // 刷新战报显示最新数量
+    renderHistory();
+  } catch(e) {}
+}
+
 // ============ 同步数据 ============
 async function syncData() {
-  const password = document.getElementById('admin-pass').value;
-  if (!password) { showToast('请输入管理员密码', true); return; }
   showToast('同步中...');
   try {
-    const res = await apiPost('/api/sync', { password });
+    const res = await apiPost('/api/sync', { password: 'worldcup2026' });
     if (res.ok) {
       showToast('✅ 同步完成');
       renderAdminMatches();

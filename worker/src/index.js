@@ -270,30 +270,60 @@ async function generateSummaryForDate(env, today) {
 
   if (allResultsIn) {
     // ===== 阶段3：赛后最终总结（所有比赛结果都录入后）=====
-    let statsText = `今日比赛结果:\n`;
-    for (const r of todayResults) {
-      statsText += `${r.match_id}: ${r.home_score}:${r.away_score}\n`;
-    }
-    statsText += `\n各选手表现:\n`;
+    // 计算排名
+    const dayUsers = [];
     for (const [name, preds] of Object.entries(userPreds)) {
-      let correct = 0, exactHits = 0;
-      const predDetails = [];
+      let correct = 0, gdTotal = 0, goalTotal = 0, exactHits = 0;
       for (const p of preds) {
         const actual = resultMap[p.match_id];
         if (!actual) continue;
-        const pR = p.home_score > p.away_score ? 'W' : p.home_score < p.away_score ? 'L' : 'D';
-        const aR = actual.home_score > actual.away_score ? 'W' : actual.home_score < actual.away_score ? 'L' : 'D';
-        const isCorrect = pR === aR;
-        if (isCorrect) correct++;
-        if (p.home_score === actual.home_score && p.away_score === actual.away_score) exactHits++;
-        predDetails.push(`预测${p.home_score}:${p.away_score} 实际${actual.home_score}:${actual.away_score} ${isCorrect ? '✅' : '❌'}`);
+        const pH = p.home_score, pA = p.away_score;
+        const aH = actual.home_score, aA = actual.away_score;
+        const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+        const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+        if (pR === aR) correct++;
+        if (pH === aH && pA === aA) exactHits++;
+        gdTotal += Math.abs((pH - pA) - (aH - aA));
+        goalTotal += Math.abs(pH - aH) + Math.abs(pA - aA);
       }
-      statsText += `${name}: ${correct}/${preds.length}场对 ${exactHits}次精确命中 [${predDetails.join(', ')}]\n`;
+      dayUsers.push({ name, correct, gdTotal, goalTotal, exactHits, total: preds.length });
+    }
+    dayUsers.sort((a, b) => {
+      if (a.correct !== b.correct) return b.correct - a.correct;
+      if (a.gdTotal !== b.gdTotal) return a.gdTotal - b.gdTotal;
+      return a.goalTotal - b.goalTotal;
+    });
+
+    const numMatches = todayResults.length;
+    const pool = dayUsers.length * 5 * numMatches;
+    const prizeRates = [0.6, 0.3, 0.1];
+
+    let statsText = `今日${numMatches}场比赛，${dayUsers.length}人参与，奖池¥${pool}\n\n当日排名:\n`;
+    let rank = 1;
+    for (let i = 0; i < dayUsers.length; i++) {
+      if (i > 0) {
+        const prev = dayUsers[i-1], cur = dayUsers[i];
+        if (cur.correct !== prev.correct || cur.gdTotal !== prev.gdTotal || cur.goalTotal !== prev.goalTotal) rank = i + 1;
+      }
+      const u = dayUsers[i];
+      const tiedCount = dayUsers.filter((_, j) => {
+        let r = 1;
+        for (let k = 1; k <= j; k++) {
+          const p2 = dayUsers[k-1], c2 = dayUsers[k];
+          if (c2.correct !== p2.correct || c2.gdTotal !== p2.gdTotal || c2.goalTotal !== p2.goalTotal) r = k + 1;
+        }
+        return r === rank;
+      }).length;
+      let totalRate = 0;
+      for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
+      const prize = Math.round((pool * totalRate) / tiedCount);
+      statsText += `第${rank}名: ${u.name} (${u.correct}/${u.total}场胜负对, ${u.exactHits}次精确命中, 奖金+¥${prize})\n`;
     }
 
-    prompt = `你是世界杯竞猜群的解说员。比赛已结束，根据数据写最终总结（50字以内），幽默、点名、有梗。不要markdown。严格只提到数据中出现的人名，不要编造。
+    prompt = `你是世界杯竞猜群的解说员。根据当日最终排名写一句话总结（50字以内），幽默、点名、有梗。不要markdown。严格只提到数据中出现的人名，不要编造。
 
-例子：球王今日双杀精确命中封神，林彪连续三天垫底建议改名林摆。
+例子1：方烁今日登顶精确命中封神，喂狗垫底建议回家种地。
+例子2：球王独占鳌头赢走42块，佩雷兹和林彪并列第二平分奖金。
 
 ${statsText}`;
     isFinal = 1;
@@ -399,19 +429,19 @@ async function generateMatchPrompt(env) {
     const matchInfo = [];
     for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
       if (!key.endsWith(date)) continue;
-      const parts = key.replace(`-${date}`, '').split('-');
-      const home = parts[0];
-      const away = parts.slice(1).join('-');
-      const odds = oddsMap[mid];
-      const oddsStr = odds ? `赔率 主${odds.home} 平${odds.draw} 客${odds.away}` : '';
-      matchInfo.push(`${home} vs ${away} ${oddsStr}`);
+      const parts = key.replace(`-${date}`, '');
+      const idx = parts.indexOf('-');
+      const home = parts.substring(0, idx);
+      const away = parts.substring(idx + 1);
+      matchInfo.push(`${home} vs ${away}`);
     }
 
     if (matchInfo.length === 0) return;
 
-    const prompt = `你是世界杯竞猜群的主持人。根据今天的比赛和赔率，写一段引导性文案（50字以内），激发大家来竞猜。提到具体比赛、赔率亮点或看点。语气兴奋有煽动性。不要markdown。
+    const prompt = `你是世界杯竞猜群的主持人。根据今天的对阵写一段引导性文案（50字以内），提到具体对阵的看点、历史恩怨、球队特点、关键球星等。语气兴奋有煽动性。不要提赔率。不要markdown。
 
-例子：墨西哥1.42碾压级赔率遇上非洲黑马，韩国捷克五五开谁敢猜平局？快来下注！
+例子1：墨西哥主场遇上南非黑马，东道主压力山大！韩国太极虎能否复刻02年奇迹？
+例子2：巴西桑巴军团对阵摩洛哥铁骑，四年前的恩怨今天清算！
 
 今日比赛:
 ${matchInfo.join('\n')}`;
@@ -681,6 +711,34 @@ async function handleAPI(url, request, env) {
       }
       const { results } = await stmt.all();
       return json(results, 200, headers);
+    }
+
+    // POST /api/react - 送花/点踩
+    if (url.pathname === '/api/react' && request.method === 'POST') {
+      const body = await request.json();
+      const { date, target, reaction, from_user } = body;
+      if (!date || !target || !reaction) {
+        return json({ error: '缺少参数' }, 400, headers);
+      }
+      await env.DB.prepare(
+        'INSERT INTO reactions (match_date, target, reaction, from_user) VALUES (?, ?, ?, ?)'
+      ).bind(date, target, reaction, from_user || '').run();
+      return json({ ok: true }, 200, headers);
+    }
+
+    // GET /api/reactions?date=2026-06-12
+    if (url.pathname === '/api/reactions' && request.method === 'GET') {
+      const date = url.searchParams.get('date');
+      if (!date) return json({ error: '需要date参数' }, 400, headers);
+      const { results } = await env.DB.prepare(
+        'SELECT target, reaction, COUNT(*) as count FROM reactions WHERE match_date = ? GROUP BY target, reaction'
+      ).bind(date).all();
+      const grouped = {};
+      for (const r of results) {
+        if (!grouped[r.target]) grouped[r.target] = {};
+        grouped[r.target][r.reaction] = r.count;
+      }
+      return json(grouped, 200, headers);
     }
 
     // GET /api/match-prompt?date=2026-06-12
