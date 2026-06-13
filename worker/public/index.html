@@ -1117,7 +1117,7 @@ async function renderAchievements() {
   let allPreds = {}, allResults = {};
 
   try {
-    // 拉取所有有结果的日期数据
+    // 拉取所有日期的结果和预测
     const dates = getScheduleDates();
     for (const date of dates) {
       const [resData, predData] = await Promise.all([
@@ -1128,11 +1128,12 @@ async function renderAchievements() {
         for (const r of resData) {
           allResults[r.match_id] = { home: r.home_score, away: r.away_score, date: r.match_date };
         }
-        if (predData && Object.keys(predData).length > 0) {
-          for (const [name, preds] of Object.entries(predData)) {
-            if (!allPreds[name]) allPreds[name] = {};
-            Object.assign(allPreds[name], preds);
-          }
+      }
+      // 加载所有预测（不限于有结果的日期，心有灵犀/抄袭等需要）
+      if (predData && Object.keys(predData).length > 0) {
+        for (const [name, preds] of Object.entries(predData)) {
+          if (!allPreds[name]) allPreds[name] = {};
+          Object.assign(allPreds[name], preds);
         }
       }
     }
