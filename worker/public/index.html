@@ -915,27 +915,16 @@ async function renderHistory() {
     const medals = ['🥇', '🥈', '🥉'];
     const pool = calcPool(ranked.length, matches.length);
 
-    // 获取前一天排名用于箭头对比
+    // 获取前一天排名用于箭头对比（从 daily_rankings 表读）
     let prevRanks = {};
     const allDates = getScheduleDates();
     const dateIdx = allDates.indexOf(historyDate);
     if (dateIdx > 0) {
       const prevDate = allDates[dateIdx - 1];
       try {
-        const [prevRes, prevPred] = await Promise.all([
-          apiGet(`/api/results?date=${prevDate}`),
-          apiGet(`/api/predictions?date=${prevDate}`)
-        ]);
-        const prevResults = {};
-        for (const r of (prevRes || [])) prevResults[r.match_id] = { home: r.home_score, away: r.away_score };
-        if (Object.keys(prevResults).length > 0 && prevPred) {
-          const prevMatches = SCHEDULE[prevDate] || [];
-          const prevRanking = Object.entries(prevPred).map(([name, preds]) => {
-            const stats = calcDayStats(preds, prevMatches, prevResults);
-            return { nickname: name, ...stats };
-          }).sort(compareStats);
-          const prevAssigned = assignRanks(prevRanking);
-          for (const r of prevAssigned) prevRanks[r.nickname] = r.rank;
+        const prevData = await apiGet(`/api/daily-rankings?date=${prevDate}`);
+        for (const r of (prevData || [])) {
+          prevRanks[r.nickname] = r.rank;
         }
       } catch(e) {}
     }

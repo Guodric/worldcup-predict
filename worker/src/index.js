@@ -317,6 +317,13 @@ async function generateSummaryForDate(env, today) {
       for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
       const prize = Math.round((pool * totalRate) / tiedCount);
       statsText += `第${rank}名: ${u.name} (${u.points}分 ${u.details.join(' ')}, 奖金+¥${prize})\n`;
+
+      // 存入 daily_rankings
+      await env.DB.prepare(
+        `INSERT INTO daily_rankings (match_date, nickname, rank, points, prize)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(match_date, nickname) DO UPDATE SET rank=excluded.rank, points=excluded.points, prize=excluded.prize`
+      ).bind(today, u.name, rank, u.points, prize).run();
     }
 
     // 查明天比赛信息
@@ -779,6 +786,22 @@ async function handleAPI(url, request, env) {
         if (!firstByDate[r.match_date]) firstByDate[r.match_date] = r.nickname;
       }
       return json(firstByDate, 200, headers);
+    }
+
+    // GET /api/daily-rankings?date=2026-06-12
+    if (url.pathname === '/api/daily-rankings' && request.method === 'GET') {
+      const date = url.searchParams.get('date');
+      if (date) {
+        const { results } = await env.DB.prepare(
+          'SELECT nickname, rank, points, prize FROM daily_rankings WHERE match_date = ? ORDER BY rank'
+        ).bind(date).all();
+        return json(results, 200, headers);
+      } else {
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM daily_rankings ORDER BY match_date, rank'
+        ).all();
+        return json(results, 200, headers);
+      }
     }
 
     // GET /api/achievements - 所有成就数据一次性返回
