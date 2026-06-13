@@ -191,10 +191,10 @@ h1 {
     <div class="tab active" data-panel="predict">竞猜</div>
     <div class="tab" data-panel="leaderboard">排行</div>
     <div class="tab" data-panel="history">战报</div>
+    <div class="tab" data-panel="achievements">成就</div>
   </div>
   <div class="menu-overlay" id="menu-overlay" onclick="toggleMenu()"></div>
   <div class="menu-drawer" id="menu-drawer">
-    <div class="menu-item" data-panel="achievements">🏅 成就</div>
     <div class="menu-item" data-panel="rules">📋 规则</div>
     <div class="menu-item" data-panel="admin">🔒 管理</div>
   </div>
@@ -1112,320 +1112,27 @@ const ACHIEVEMENT_DEFS = [
   { id: 'sponsor', icon: '💰', name: '赞助商', desc: '感谢金主爸爸', check: () => false, progress: () => '', isSpecial: true, specialType: 'sponsor' },
 ];
 
+
 async function renderAchievements() {
   const container = document.getElementById('achievements-list');
-  let allPreds = {}, allResults = {};
 
+  let data;
   try {
-    // 拉取所有日期的结果和预测
-    const dates = getScheduleDates();
-    for (const date of dates) {
-      const [resData, predData] = await Promise.all([
-        apiGet(`/api/results?date=${date}`),
-        apiGet(`/api/predictions?date=${date}`)
-      ]);
-      if (resData && resData.length > 0) {
-        for (const r of resData) {
-          allResults[r.match_id] = { home: r.home_score, away: r.away_score, date: r.match_date };
-        }
-      }
-      // 加载所有预测（不限于有结果的日期，心有灵犀/抄袭等需要）
-      if (predData && Object.keys(predData).length > 0) {
-        for (const [name, preds] of Object.entries(predData)) {
-          if (!allPreds[name]) allPreds[name] = {};
-          Object.assign(allPreds[name], preds);
-        }
-      }
-    }
-  } catch (e) {}
+    data = await apiGet('/api/achievements');
+  } catch (e) {
+    container.innerHTML = '<div class="card"><p style="text-align:center;color:#888;">加载失败</p></div>';
+    return;
+  }
 
-  if (Object.keys(allResults).length === 0) {
+  if (!data || !data.stats) {
     container.innerHTML = '<div class="card"><p style="text-align:center;color:#888;">比赛开始后解锁成就</p></div>';
     return;
   }
 
-  // 获取排行榜数据（wins）、赔率、和最早提交数据
-  let lbData = [];
-  try { lbData = await apiGet('/api/leaderboard'); } catch(e) {}
-  const winsMap = {};
-  for (const item of lbData) winsMap[item.nickname] = item.wins || 0;
-
-  let firstSubmitters = {};
-  try { firstSubmitters = await apiGet('/api/first-submitters'); } catch(e) {}
-  const firstCountMap = {};
-  for (const [date, name] of Object.entries(firstSubmitters)) {
-    if (!firstCountMap[name]) firstCountMap[name] = 0;
-    firstCountMap[name]++;
-  }
-
-  let oddsData = {};
-  try { oddsData = await apiGet('/api/odds'); } catch(e) {}
-
-  // 计算每人的统计数据
-  // 先算每天每人的排名
-  const dailyRanks = {};  // { date: { name: rank } }
-  const dates = getScheduleDates();
-  for (const date of dates) {
-    const matches = SCHEDULE[date] || [];
-    const dayAllResults = matches.length > 0 && matches.every(m => allResults[m.id]);
-    if (!dayAllResults) continue;
-
-    const usePoints = date >= '2026-06-13';
-    const dayUsers = [];
-    for (const name of MEMBERS) {
-      const preds = allPreds[name] || {};
-      let correct = 0, gdTotal = 0, goalTotal = 0, points = 0, goalDiff = 0, participated = false;
-      for (const m of matches) {
-        const pred = preds[m.id];
-        const actual = allResults[m.id];
-        if (!pred || !actual) continue;
-        participated = true;
-        const pH = pred.home, pA = pred.away;
-        const aH = actual.home, aA = actual.away;
-        const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
-        const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
-        if (pR === aR) correct++;
-        if (pH === aH && pA === aA) points += 5;
-        else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
-        else if (pR === aR) points += 2;
-        gdTotal += Math.abs((pH-pA) - (aH-aA));
-        goalTotal += Math.abs(pH-aH) + Math.abs(pA-aA);
-        goalDiff += Math.abs(pH-aH) + Math.abs(pA-aA);
-      }
-      if (participated) dayUsers.push({ nickname: name, correct, gdTotal, goalTotal, points, goalDiff });
-    }
-
-    if (usePoints) {
-      dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
-    } else {
-      dayUsers.sort(compareStats);
-    }
-
-    // 分配排名
-    const ranked = [];
-    for (let i = 0; i < dayUsers.length; i++) {
-      let rank = i + 1;
-      if (i > 0) {
-        const prev = dayUsers[i-1], cur = dayUsers[i];
-        let tied;
-        if (usePoints) {
-          tied = cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff;
-        } else {
-          tied = cur.correct === prev.correct && cur.gdTotal === prev.gdTotal && cur.goalTotal === prev.goalTotal;
-        }
-        if (tied) rank = ranked[i-1].rank;
-      }
-      ranked.push({ ...dayUsers[i], rank });
-    }
-    dailyRanks[date] = {};
-    for (const r of ranked) {
-      dailyRanks[date][r.nickname] = r.rank;
-    }
-  }
-
-  const memberStats = {};
-  for (const name of MEMBERS) {
-    const preds = allPreds[name] || {};
-    let exactHits = 0, maxWrongStreak = 0, curWrongStreak = 0;
-    let perfectDays = 0, zeroDays = 0, upsetHits = 0, drawHits = 0;
-    let maxTop3Streak = 0, curTop3Streak = 0;
-    let maxLastStreak = 0, curLastStreak = 0;
-
-    for (const date of dates) {
-      const matches = SCHEDULE[date] || [];
-      // 只有当天所有比赛结果齐全才计算成就
-      const dayComplete = matches.length > 0 && matches.every(m => allResults[m.id]);
-      if (!dayComplete) continue;
-
-      let dayCorrect = 0, dayTotal = 0;
-      for (const m of matches) {
-        const pred = preds[m.id];
-        const actual = allResults[m.id];
-        if (!pred || !actual) continue;
-        dayTotal++;
-        const a = analyzeMatch(pred, actual);
-
-        if (pred.home === actual.home && pred.away === actual.away) exactHits++;
-        if (a.resultCorrect) {
-          dayCorrect++;
-          curWrongStreak = 0;
-          const aR = actual.home === actual.away ? 'D' : '';
-          const pR = pred.home === pred.away ? 'D' : '';
-          if (aR === 'D' && pR === 'D') drawHits++;
-          // 冷门猎手：猜对的结果赔率>3.0
-          const odds = oddsData[m.id];
-          if (odds) {
-            const actualResult = actual.home > actual.away ? 'home' : actual.home < actual.away ? 'away' : 'draw';
-            const winningOdds = odds[actualResult];
-            if (winningOdds && winningOdds >= 3.0) upsetHits++;
-          }
-        } else {
-          curWrongStreak++;
-          if (curWrongStreak > maxWrongStreak) maxWrongStreak = curWrongStreak;
-        }
-      }
-      if (dayTotal > 0 && dayCorrect === dayTotal) perfectDays++;
-      if (dayTotal > 0 && dayCorrect === 0) zeroDays++;
-
-      // 连续前三/垫底计算
-      const rank = dailyRanks[date]?.[name];
-      const numInDay = Object.keys(dailyRanks[date] || {}).length;
-      if (rank && rank <= 3) {
-        curTop3Streak++;
-        curLastStreak = 0;
-        if (curTop3Streak > maxTop3Streak) maxTop3Streak = curTop3Streak;
-      } else if (rank && rank === numInDay && numInDay > 1) {
-        curLastStreak++;
-        curTop3Streak = 0;
-        if (curLastStreak > maxLastStreak) maxLastStreak = curLastStreak;
-      } else if (rank) {
-        curTop3Streak = 0;
-        curLastStreak = 0;
-      }
-    }
-
-    memberStats[name] = {
-      exactHits, maxTop3Streak, maxLastStreak, maxWrongStreak, perfectDays, zeroDays,
-      upsetHits, drawHits, wins: winsMap[name] || 0, firstCount: firstCountMap[name] || 0,
-      maxRankJump: 0, maxRankDrop: 0, maxSoulmate: 0, soulmatePartner: '',
-      top3Count: 0, notTop3Count: 0
-    };
-  }
-
-  // 计算前三次数和落榜次数
-  const completeDates2 = dates.filter(d => {
-    const ms = SCHEDULE[d] || [];
-    return ms.length > 0 && ms.every(m => allResults[m.id]);
-  });
-  for (const name of MEMBERS) {
-    for (const date of completeDates2) {
-      const rank = dailyRanks[date]?.[name];
-      if (rank && rank <= 3) memberStats[name].top3Count++;
-      else if (rank) memberStats[name].notTop3Count++;
-    }
-  }
-
-  // 计算排名变化（火箭升空/自由落体）
-  const completeDates = dates.filter(d => {
-    const ms = SCHEDULE[d] || [];
-    return ms.length > 0 && ms.every(m => allResults[m.id]);
-  });
-  for (const name of MEMBERS) {
-    let prevRank = null;
-    for (const date of completeDates) {
-      const rank = dailyRanks[date]?.[name];
-      if (rank && prevRank) {
-        const jump = prevRank - rank;
-        const drop = rank - prevRank;
-        if (jump > memberStats[name].maxRankJump) memberStats[name].maxRankJump = jump;
-        if (drop > memberStats[name].maxRankDrop) memberStats[name].maxRankDrop = drop;
-      }
-      if (rank) prevRank = rank;
-    }
-  }
-
-  // 计算笨鸟先飞 + 抄袭之王（都需要提交时间）
-  let copycatCounts = {};
-  let earlyBirdScores = {};
-  try {
-    const predsWithTime = await apiGet('/api/predictions-with-time');
-    // 按 match_id 分组
-    const byMatch = {};
-    for (const p of predsWithTime) {
-      const key = `${p.match_date}_${p.match_id}`;
-      if (!byMatch[key]) byMatch[key] = [];
-      byMatch[key].push(p);
-    }
-    // 笨鸟先飞：每天按最早提交时间排，第1名得N分(N=当天人数)，最后1名得1分
-    const byDate = {};
-    for (const p of predsWithTime) {
-      if (!byDate[p.match_date]) byDate[p.match_date] = {};
-      if (!byDate[p.match_date][p.nickname] || p.created_at < byDate[p.match_date][p.nickname]) {
-        byDate[p.match_date][p.nickname] = p.created_at;
-      }
-    }
-    for (const [date, submissions] of Object.entries(byDate)) {
-      const sorted = Object.entries(submissions).sort((a, b) => a[1].localeCompare(b[1]));
-      const total = sorted.length;
-      sorted.forEach(([name], i) => {
-        if (!earlyBirdScores[name]) earlyBirdScores[name] = 0;
-        earlyBirdScores[name] += total - i;
-      });
-    }
-
-    // 每场比赛：如果后面的人跟前面某人比分一样，算一次抄袭
-    for (const [key, preds] of Object.entries(byMatch)) {
-      // 已按 created_at 排序
-      for (let i = 1; i < preds.length; i++) {
-        for (let j = 0; j < i; j++) {
-          if (preds[i].home_score === preds[j].home_score && preds[i].away_score === preds[j].away_score) {
-            const copier = preds[i].nickname;
-            if (!copycatCounts[copier]) copycatCounts[copier] = 0;
-            copycatCounts[copier]++;
-            break;
-          }
-        }
-      }
-    }
-  } catch(e) {}
-  const copycatRanking = Object.entries(copycatCounts)
-    .filter(([_, count]) => count >= 1)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-
-  const earlyBirdRanking = Object.entries(earlyBirdScores)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-
-  const latecomerRanking = Object.entries(earlyBirdScores)
-    .sort((a, b) => a[1] - b[1])
-    .slice(0, 3);
-
-  // 计算高光时刻和黑色一天（单日最高/最低分）
-  const dayScores = [];
-  for (const date of completeDates2) {
-    const matches = SCHEDULE[date] || [];
-    for (const name of MEMBERS) {
-      const preds = allPreds[name] || {};
-      let dayPoints = 0, participated = false;
-      for (const m of matches) {
-        const pred = preds[m.id];
-        const actual = allResults[m.id];
-        if (!pred || !actual) continue;
-        participated = true;
-        const pH = pred.home, pA = pred.away;
-        const aH = actual.home, aA = actual.away;
-        const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
-        const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
-        if (pH === aH && pA === aA) dayPoints += 5;
-        else if (pR === aR && (pH-pA) === (aH-aA)) dayPoints += 3;
-        else if (pR === aR) dayPoints += 2;
-      }
-      if (participated) dayScores.push({ name, date, points: dayPoints });
-    }
-  }
-  const highlightTop3 = [...dayScores].sort((a, b) => b.points - a.points).slice(0, 3);
-  const lowlightTop3 = [...dayScores].sort((a, b) => a.points - b.points).slice(0, 3);
-
-  // 计算心有灵犀（两两配对，数相同比分场次）
-  const soulmatePairs = [];
-  for (let i = 0; i < MEMBERS.length; i++) {
-    for (let j = i + 1; j < MEMBERS.length; j++) {
-      const a = MEMBERS[i], b = MEMBERS[j];
-      const predsA = allPreds[a] || {}, predsB = allPreds[b] || {};
-      let sameCount = 0;
-      for (const [matchId, predA] of Object.entries(predsA)) {
-        const predB = predsB[matchId];
-        if (predB && predA.home === predB.home && predA.away === predB.away) sameCount++;
-      }
-      if (sameCount > 0) soulmatePairs.push({ a, b, count: sameCount });
-    }
-  }
-  soulmatePairs.sort((x, y) => y.count - x.count);
-  const top3Pairs = soulmatePairs.slice(0, 3);
-
-  // 渲染成就列表
+  const { stats, highlightTop3, lowlightTop3, soulmatePairs, earlyBirdRanking, latecomerRanking, copycatRanking } = data;
+  const medals = ['🥇', '🥈', '🥉'];
   let html = '';
+
   for (const ach of ACHIEVEMENT_DEFS) {
     // 赞助商
     if (ach.isSpecial && ach.specialType === 'sponsor') {
@@ -1446,15 +1153,14 @@ async function renderAchievements() {
       continue;
     }
 
-    // 排名制成就（通用）
+    // 排名制成就
     if (ach.isRanked) {
       const ranking = MEMBERS
-        .map(name => ({ name, value: memberStats[name][ach.stat] || 0 }))
+        .map(name => ({ name, value: stats[name]?.[ach.stat] || 0 }))
         .filter(r => r.value > 0)
         .sort((a, b) => b.value - a.value)
         .slice(0, 3);
       const hasAny = ranking.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1477,7 +1183,6 @@ async function renderAchievements() {
     // 高光时刻
     if (ach.isSpecial && ach.specialType === 'highlight') {
       const hasAny = highlightTop3.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1500,7 +1205,6 @@ async function renderAchievements() {
     // 黑色一天
     if (ach.isSpecial && ach.specialType === 'lowlight') {
       const hasAny = lowlightTop3.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1523,7 +1227,6 @@ async function renderAchievements() {
     // 笨鸟先飞
     if (ach.isSpecial && ach.id === 'early_bird') {
       const hasAny = earlyBirdRanking.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1546,7 +1249,6 @@ async function renderAchievements() {
     // 大忙人
     if (ach.isSpecial && ach.id === 'latecomer') {
       const hasAny = latecomerRanking.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1569,7 +1271,6 @@ async function renderAchievements() {
     // 抄袭之王
     if (ach.isSpecial && ach.id === 'copycat') {
       const hasAny = copycatRanking.length > 0;
-      const medals = ['🥇', '🥈', '🥉'];
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1591,8 +1292,7 @@ async function renderAchievements() {
 
     // 心有灵犀
     if (ach.isSpecial && ach.id === 'soulmate') {
-      const hasAny = top3Pairs.length > 0 && top3Pairs[0].count >= 1;
-      const medals = ['🥇', '🥈', '🥉'];
+      const hasAny = soulmatePairs.length > 0 && soulmatePairs[0].count >= 1;
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:24px;">${ach.icon}</span>
@@ -1602,8 +1302,8 @@ async function renderAchievements() {
           </div>
           ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
         </div>
-        ${top3Pairs.length > 0 ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
-          ${top3Pairs.map((p, i) => `<div style="padding:3px 0;font-size:12px;">
+        ${soulmatePairs.length > 0 ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${soulmatePairs.map((p, i) => `<div style="padding:3px 0;font-size:12px;">
             <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
             ${p.a} & ${p.b} <span style="color:#f5a623;">${p.count}场相同</span>
           </div>`).join('')}
@@ -1615,6 +1315,7 @@ async function renderAchievements() {
 
   container.innerHTML = html;
 }
+
 
 // ============ AI Prompt (加载一次) ============
 async function loadAIPrompt() {

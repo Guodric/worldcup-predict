@@ -781,6 +781,233 @@ async function handleAPI(url, request, env) {
       return json(firstByDate, 200, headers);
     }
 
+    // GET /api/achievements - 所有成就数据一次性返回
+    if (url.pathname === '/api/achievements' && request.method === 'GET') {
+      const { results: allPreds } = await env.DB.prepare(
+        'SELECT nickname, match_date, match_id, home_score, away_score FROM predictions'
+      ).all();
+      const { results: allResults } = await env.DB.prepare(
+        'SELECT match_id, match_date, home_score, away_score FROM results'
+      ).all();
+      const { results: allOdds } = await env.DB.prepare(
+        'SELECT match_id, home_odds, draw_odds, away_odds FROM odds'
+      ).all();
+      const { results: auditData } = await env.DB.prepare(
+        'SELECT nickname, match_date, MIN(created_at) as first_time FROM audit_log WHERE action=\'predict\' GROUP BY nickname, match_date ORDER BY match_date, first_time'
+      ).all();
+      const { results: lbData } = await env.DB.prepare(
+        'SELECT nickname, match_date, match_id, home_score, away_score, created_at FROM predictions ORDER BY match_date, match_id, created_at'
+      ).all();
+
+      const resultMap = {};
+      for (const r of allResults) resultMap[r.match_id] = { home: r.home_score, away: r.away_score, date: r.match_date };
+
+      const oddsMap = {};
+      for (const r of allOdds) oddsMap[r.match_id] = { home: r.home_odds, draw: r.draw_odds, away: r.away_odds };
+
+      // 按人分组预测
+      const predsByUser = {};
+      for (const p of allPreds) {
+        if (!predsByUser[p.nickname]) predsByUser[p.nickname] = {};
+        predsByUser[p.nickname][p.match_id] = { home: p.home_score, away: p.away_score, date: p.match_date };
+      }
+
+      // 确定完整日期（所有比赛都有结果）
+      const allMatchDates = [...new Set(allPreds.map(p => p.match_date))].sort();
+      const completeDates = allMatchDates.filter(date => {
+        let expected = 0;
+        for (const [key] of Object.entries(MATCH_LOOKUP)) {
+          if (key.endsWith(date)) expected++;
+        }
+        const actual = allResults.filter(r => r.match_date === date).length;
+        return actual >= expected && expected > 0;
+      });
+
+      // 每天排名
+      const dailyRanks = {};
+      for (const date of completeDates) {
+        const usePoints = date >= '2026-06-13';
+        const matchIds = [];
+        for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
+          if (key.endsWith(date)) matchIds.push(mid);
+        }
+        const dayUsers = [];
+        for (const name of ALLOWED_NICKNAMES) {
+          let correct = 0, gdTotal = 0, goalTotal = 0, points = 0, goalDiff = 0, participated = false;
+          for (const mid of matchIds) {
+            const pred = predsByUser[name]?.[mid];
+            const actual = resultMap[mid];
+            if (!pred || !actual) continue;
+            participated = true;
+            const pH = pred.home, pA = pred.away, aH = actual.home, aA = actual.away;
+            const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+            const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+            if (pR === aR) correct++;
+            if (pH === aH && pA === aA) points += 5;
+            else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
+            else if (pR === aR) points += 2;
+            gdTotal += Math.abs((pH-pA) - (aH-aA));
+            goalDiff += Math.abs(pH-aH) + Math.abs(pA-aA);
+            goalTotal += Math.abs(pH-aH) + Math.abs(pA-aA);
+          }
+          if (participated) dayUsers.push({ name, correct, gdTotal, goalTotal, points, goalDiff });
+        }
+        if (usePoints) {
+          dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
+        } else {
+          dayUsers.sort((a, b) => (b.correct - a.correct) || (a.gdTotal - b.gdTotal) || (a.goalTotal - b.goalTotal));
+        }
+        // assign ranks
+        dailyRanks[date] = {};
+        let rank = 1;
+        for (let i = 0; i < dayUsers.length; i++) {
+          if (i > 0) {
+            const prev = dayUsers[i-1], cur = dayUsers[i];
+            let tied = usePoints
+              ? (cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff)
+              : (cur.correct === prev.correct && cur.gdTotal === prev.gdTotal && cur.goalTotal === prev.goalTotal);
+            if (!tied) rank = i + 1;
+          }
+          dailyRanks[date][dayUsers[i].name] = rank;
+        }
+      }
+
+      // 计算每人统计
+      const stats = {};
+      for (const name of ALLOWED_NICKNAMES) {
+        let exactHits = 0, upsetHits = 0, drawHits = 0;
+        let top3Count = 0, notTop3Count = 0, wins = 0;
+        let maxRankJump = 0, maxRankDrop = 0;
+        const dayScoresForUser = [];
+
+        for (const date of completeDates) {
+          const matchIds = [];
+          for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
+            if (key.endsWith(date)) matchIds.push(mid);
+          }
+          let dayPoints = 0, participated = false;
+          for (const mid of matchIds) {
+            const pred = predsByUser[name]?.[mid];
+            const actual = resultMap[mid];
+            if (!pred || !actual) continue;
+            participated = true;
+            const pH = pred.home, pA = pred.away, aH = actual.home, aA = actual.away;
+            const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+            const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+            if (pH === aH && pA === aA) { exactHits++; dayPoints += 5; }
+            else if (pR === aR && (pH-pA) === (aH-aA)) dayPoints += 3;
+            else if (pR === aR) dayPoints += 2;
+            if (pR === aR && aH === aA && pH === pA) drawHits++;
+            // 冷门
+            if (pR === aR) {
+              const odds = oddsMap[mid];
+              if (odds) {
+                const actualResult = aH > aA ? 'home' : aH < aA ? 'away' : 'draw';
+                if (odds[actualResult] >= 3.0) upsetHits++;
+              }
+            }
+          }
+          if (participated) dayScoresForUser.push({ date, points: dayPoints });
+
+          const r = dailyRanks[date]?.[name];
+          if (r && r <= 3) top3Count++;
+          else if (r) notTop3Count++;
+          if (r === 1) wins++;
+        }
+
+        // rank jumps
+        let prevRank = null;
+        for (const date of completeDates) {
+          const r = dailyRanks[date]?.[name];
+          if (r && prevRank) {
+            const jump = prevRank - r;
+            const drop = r - prevRank;
+            if (jump > maxRankJump) maxRankJump = jump;
+            if (drop > maxRankDrop) maxRankDrop = drop;
+          }
+          if (r) prevRank = r;
+        }
+
+        stats[name] = { exactHits, upsetHits, drawHits, top3Count, notTop3Count, wins, maxRankJump, maxRankDrop, dayScores: dayScoresForUser };
+      }
+
+      // 高光/黑色一天
+      const allDayScores = [];
+      for (const name of ALLOWED_NICKNAMES) {
+        for (const ds of stats[name].dayScores) {
+          allDayScores.push({ name, ...ds });
+        }
+      }
+      const highlightTop3 = [...allDayScores].sort((a, b) => b.points - a.points).slice(0, 3);
+      const lowlightTop3 = [...allDayScores].sort((a, b) => a.points - b.points).slice(0, 3);
+
+      // 心有灵犀
+      const soulmatePairs = [];
+      for (let i = 0; i < ALLOWED_NICKNAMES.length; i++) {
+        for (let j = i + 1; j < ALLOWED_NICKNAMES.length; j++) {
+          const a = ALLOWED_NICKNAMES[i], b = ALLOWED_NICKNAMES[j];
+          const predsA = predsByUser[a] || {}, predsB = predsByUser[b] || {};
+          let sameCount = 0;
+          for (const [mid, predA] of Object.entries(predsA)) {
+            const predB = predsB[mid];
+            if (predB && predA.home === predB.home && predA.away === predB.away) sameCount++;
+          }
+          if (sameCount > 0) soulmatePairs.push({ a, b, count: sameCount });
+        }
+      }
+      soulmatePairs.sort((a, b) => b.count - a.count);
+
+      // 笨鸟先飞 + 大忙人
+      const earlyBirdScores = {};
+      const byDate = {};
+      for (const r of auditData) {
+        if (!byDate[r.match_date]) byDate[r.match_date] = {};
+        if (!byDate[r.match_date][r.nickname]) byDate[r.match_date][r.nickname] = r.first_time;
+      }
+      for (const [date, submissions] of Object.entries(byDate)) {
+        const sorted = Object.entries(submissions).sort((a, b) => a[1].localeCompare(b[1]));
+        const total = sorted.length;
+        sorted.forEach(([name], i) => {
+          if (!earlyBirdScores[name]) earlyBirdScores[name] = 0;
+          earlyBirdScores[name] += total - i;
+        });
+      }
+      const earlyBirdRanking = Object.entries(earlyBirdScores).sort((a, b) => b[1] - a[1]).slice(0, 3);
+      const latecomerRanking = Object.entries(earlyBirdScores).sort((a, b) => a[1] - b[1]).slice(0, 3);
+
+      // 抄袭之王
+      const copycatCounts = {};
+      const byMatch = {};
+      for (const p of lbData) {
+        const key = `${p.match_date}_${p.match_id}`;
+        if (!byMatch[key]) byMatch[key] = [];
+        byMatch[key].push(p);
+      }
+      for (const [key, preds] of Object.entries(byMatch)) {
+        for (let i = 1; i < preds.length; i++) {
+          for (let j = 0; j < i; j++) {
+            if (preds[i].home_score === preds[j].home_score && preds[i].away_score === preds[j].away_score) {
+              const copier = preds[i].nickname;
+              if (!copycatCounts[copier]) copycatCounts[copier] = 0;
+              copycatCounts[copier]++;
+              break;
+            }
+          }
+        }
+      }
+      const copycatRanking = Object.entries(copycatCounts).filter(([_, c]) => c >= 1).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+      return json({
+        stats,
+        highlightTop3,
+        lowlightTop3,
+        soulmatePairs: soulmatePairs.slice(0, 3),
+        earlyBirdRanking,
+        latecomerRanking,
+        copycatRanking,
+      }, 200, headers);
+    }
+
     // GET /api/match-prompt?date=2026-06-12
     if (url.pathname === '/api/match-prompt' && request.method === 'GET') {
       const date = url.searchParams.get('date');
