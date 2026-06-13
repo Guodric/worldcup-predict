@@ -177,6 +177,10 @@ async function fetchAndStoreOdds(env) {
     const bjDate = new Date(utcDate.getTime() + 8 * 3600000);
     const dateStr = bjDate.toISOString().split('T')[0];
 
+    // 已开赛的比赛不更新赔率
+    const now = new Date();
+    if (now >= utcDate) continue;
+
     const lookupKey = `${homeName}-${awayName}-${dateStr}`;
     const matchId = MATCH_LOOKUP[lookupKey];
     if (!matchId) continue;
@@ -334,16 +338,21 @@ async function generateSummaryForDate(env, today) {
         }
       }
       if (tomorrowMatches.length > 0) {
-        tomorrowInfo = `\n明日(${tomorrowDate})比赛: ${tomorrowMatches.join('、')}，共${tomorrowMatches.length}场，竞猜费${dayUsers.length * 5 * tomorrowMatches.length}元`;
+        tomorrowInfo = `\n明日(${tomorrowDate})比赛: ${tomorrowMatches.join('、')}，共${tomorrowMatches.length}场`;
       }
     }
 
     statsText += tomorrowInfo;
 
-    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.预告明天比赛。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。
+    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.预告明天比赛（不要提具体奖池金额）4.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯5表示精确命中一场得5分，✅2表示猜对胜负得2分，👍3表示猜对净胜球得3分，❌0表示猜错得0分。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
 
 例子：
 6.13 结果总结及颁奖：泳佳凭借准确预测了加拿大vs波黑的结果，在新规加持的第一天，获得5分，得到今日🥇，将获得35元奖金。球王，林彪，佩雷兹，方烁与喂狗都猜对了一场比赛的胜负，球王以净胜球差优势获得🥈，将获得21元奖金。林彪佩雷兹以进球数差优势力压方烁喂狗并列🥉，将各获得7元奖金。航班本日竞猜两场皆墨，急需调整状态。6.14比赛日将迎来第一个4场比赛的比赛日，且有巴西vs摩洛哥的焦点之战。本日竞猜费为20元，是领先集团扩大优势，还是落后集团一举翻身，让我们拭目以待！
+
+泳佳今日独领风，
+航班两场一场空。
+明日四战烽烟起，
+看谁翻身变英雄。
 
 ${statsText}`;
     isFinal = 1;
@@ -396,12 +405,21 @@ ${statsText}`;
 
   // 调用 AI
   try {
-    const aiRes = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: isFinal ? 400 : 100,
+    const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: isFinal ? 600 : 100,
+        messages: [{ role: 'user', content: prompt }],
+      }),
     });
-
-    const summary = aiRes.response || '';
+    const aiData = await aiRes.json();
+    const summary = aiData?.content?.[0]?.text || '';
     if (summary.length > 10) {
       // Upsert: 赛前总结可覆盖，赛后锁定
       await env.DB.prepare(
@@ -465,12 +483,21 @@ async function generateMatchPrompt(env) {
 ${matchInfo.join('\n')}`;
 
     try {
-      const aiRes = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 100,
+      const aiRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 200,
+          messages: [{ role: 'user', content: prompt }],
+        }),
       });
-
-      const content = aiRes.response || '';
+      const aiData = await aiRes.json();
+      const content = aiData?.content?.[0]?.text || '';
       if (content.length > 10) {
         await env.DB.prepare(
           'INSERT INTO match_prompts (match_date, content) VALUES (?, ?)'
@@ -771,6 +798,28 @@ async function handleAPI(url, request, env) {
         grouped[r.target][r.reaction] = r.count;
       }
       return json(grouped, 200, headers);
+    }
+
+    // GET /api/predictions-with-time - 所有预测含提交时间
+    if (url.pathname === '/api/predictions-with-time' && request.method === 'GET') {
+      const { results } = await env.DB.prepare(
+        'SELECT nickname, match_date, match_id, home_score, away_score, created_at FROM predictions ORDER BY match_date, match_id, created_at'
+      ).all();
+      return json(results, 200, headers);
+    }
+
+    // GET /api/first-submitters - 每天谁第一个提交
+    if (url.pathname === '/api/first-submitters' && request.method === 'GET') {
+      const { results } = await env.DB.prepare(
+        `SELECT match_date, nickname, MIN(created_at) as first_submit
+         FROM predictions GROUP BY match_date, nickname ORDER BY match_date, first_submit`
+      ).all();
+      // 每天取第一个
+      const firstByDate = {};
+      for (const r of results) {
+        if (!firstByDate[r.match_date]) firstByDate[r.match_date] = r.nickname;
+      }
+      return json(firstByDate, 200, headers);
     }
 
     // GET /api/match-prompt?date=2026-06-12

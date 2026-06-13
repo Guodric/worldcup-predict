@@ -984,7 +984,7 @@ async function renderHistory() {
       const borderColor = isFinal ? '#f5a623' : '#667eea';
       summaryHtml = `<div class="card" style="border:1px solid ${borderColor};">
         <div style="font-size:12px;color:${borderColor};margin-bottom:6px;">${label}</div>
-        <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary}</div>
+        <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary.replace(/\n/g, '<br>')}</div>
       </div>`;
     }
   } catch(e) {}
@@ -1072,16 +1072,19 @@ function calcPool(numPlayers, numMatches) {
 
 // ============ 成就系统 ============
 const ACHIEVEMENT_DEFS = [
-  { id: 'sniper', icon: '🎯', name: '神射手', desc: '精确命中比分3次', check: (s) => s.exactHits >= 3, progress: (s) => `${s.exactHits}/3` },
-  { id: 'sniper3', icon: '🎯🎯🎯', name: '精确制导', desc: '精确命中累计5次', check: (s) => s.exactHits >= 5, progress: (s) => `${s.exactHits}/5` },
-  { id: 'streak3', icon: '🔥', name: '三连稳', desc: '连续3天进入前三', check: (s) => s.maxTop3Streak >= 3, progress: (s) => `连续${s.maxTop3Streak}天前三` },
-  { id: 'streak5', icon: '🔥🔥', name: '五连稳', desc: '连续5天进入前三', check: (s) => s.maxTop3Streak >= 5, progress: (s) => `连续${s.maxTop3Streak}天前三` },
-  { id: 'perfect_day', icon: '👑', name: '全知全能', desc: '单日全部猜对胜负', check: (s) => s.perfectDays > 0, progress: (s) => `${s.perfectDays}天全对` },
-  { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '猜中3场冷门(赔率>3.0)', check: (s) => s.upsetHits >= 3, progress: (s) => `${s.upsetHits}/3` },
-  { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日全部猜错胜负', check: (s) => s.zeroDays > 0, progress: (s) => `${s.zeroDays}天全错` },
-  { id: 'reverse', icon: '📉', name: '反向指标', desc: '连续3天垫底', check: (s) => s.maxLastStreak >= 3, progress: (s) => `连续${s.maxLastStreak}天垫底` },
-  { id: 'champion3', icon: '🏆', name: '三冠王', desc: '累计3次日冠军', check: (s) => s.wins >= 3, progress: (s) => `${s.wins}/3冠` },
-  { id: 'draw_master', icon: '🤝', name: '和棋大师', desc: '猜中5次平局', check: (s) => s.drawHits >= 5, progress: (s) => `${s.drawHits}/5` },
+  { id: 'sniper', icon: '🎯', name: '神射手', desc: '谁精确命中最多？', stat: 'exactHits', unit: '次命中', isRanked: true },
+  { id: 'streak3', icon: '🔥', name: '常胜将军', desc: '谁进前三最多？', stat: 'top3Count', unit: '次前三', isRanked: true },
+  { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '谁猜中冷门最多？', stat: 'upsetHits', unit: '次冷门', isRanked: true },
+  { id: 'reverse', icon: '📉', name: '反向指标', desc: '谁没进前三最多？', stat: 'notTop3Count', unit: '次落榜', isRanked: true },
+  { id: 'champion3', icon: '🏆', name: '冠军收割机', desc: '谁拿冠军最多？', stat: 'wins', unit: '次冠军', isRanked: true },
+  { id: 'perfect_day', icon: '👑', name: '高光时刻', desc: '单日最高分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'highlight' },
+  { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日最低分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'lowlight' },
+  { id: 'draw_master', icon: '🤝', name: '和棋大师', desc: '谁猜中平局最多？', stat: 'drawHits', unit: '次平局', isRanked: true },
+  { id: 'early_bird', icon: '🐦', name: '笨鸟先飞', desc: '谁交的最早？', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'rocket', icon: '🚀', name: '火箭升空', desc: '单日最大排名跃升', stat: 'maxRankJump', unit: '位跃升', isRanked: true },
+  { id: 'freefall', icon: '🪂', name: '自由落体', desc: '单日最大排名跌落', stat: 'maxRankDrop', unit: '位跌落', isRanked: true },
+  { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'copycat', icon: '🐱', name: '抄袭之王', desc: '别人先猜了，你跟着猜一样的', check: () => false, progress: () => '', isSpecial: true },
 ];
 
 async function renderAchievements() {
@@ -1115,11 +1118,19 @@ async function renderAchievements() {
     return;
   }
 
-  // 获取排行榜数据（wins）和赔率
+  // 获取排行榜数据（wins）、赔率、和最早提交数据
   let lbData = [];
   try { lbData = await apiGet('/api/leaderboard'); } catch(e) {}
   const winsMap = {};
   for (const item of lbData) winsMap[item.nickname] = item.wins || 0;
+
+  let firstSubmitters = {};
+  try { firstSubmitters = await apiGet('/api/first-submitters'); } catch(e) {}
+  const firstCountMap = {};
+  for (const [date, name] of Object.entries(firstSubmitters)) {
+    if (!firstCountMap[name]) firstCountMap[name] = 0;
+    firstCountMap[name]++;
+  }
 
   let oddsData = {};
   try { oddsData = await apiGet('/api/odds'); } catch(e) {}
@@ -1221,29 +1232,285 @@ async function renderAchievements() {
 
     memberStats[name] = {
       exactHits, maxTop3Streak, maxLastStreak, maxWrongStreak, perfectDays, zeroDays,
-      upsetHits, drawHits, wins: winsMap[name] || 0
+      upsetHits, drawHits, wins: winsMap[name] || 0, firstCount: firstCountMap[name] || 0,
+      maxRankJump: 0, maxRankDrop: 0, maxSoulmate: 0, soulmatePartner: '',
+      top3Count: 0, notTop3Count: 0
     };
   }
+
+  // 计算前三次数和落榜次数
+  const completeDates2 = dates.filter(d => {
+    const ms = SCHEDULE[d] || [];
+    return ms.length > 0 && ms.every(m => allResults[m.id]);
+  });
+  for (const name of MEMBERS) {
+    for (const date of completeDates2) {
+      const rank = dailyRanks[date]?.[name];
+      if (rank && rank <= 3) memberStats[name].top3Count++;
+      else if (rank) memberStats[name].notTop3Count++;
+    }
+  }
+
+  // 计算排名变化（火箭升空/自由落体）
+  const completeDates = dates.filter(d => {
+    const ms = SCHEDULE[d] || [];
+    return ms.length > 0 && ms.every(m => allResults[m.id]);
+  });
+  for (const name of MEMBERS) {
+    let prevRank = null;
+    for (const date of completeDates) {
+      const rank = dailyRanks[date]?.[name];
+      if (rank && prevRank) {
+        const jump = prevRank - rank;
+        const drop = rank - prevRank;
+        if (jump > memberStats[name].maxRankJump) memberStats[name].maxRankJump = jump;
+        if (drop > memberStats[name].maxRankDrop) memberStats[name].maxRankDrop = drop;
+      }
+      if (rank) prevRank = rank;
+    }
+  }
+
+  // 计算笨鸟先飞 + 抄袭之王（都需要提交时间）
+  let copycatCounts = {};
+  let earlyBirdScores = {};
+  try {
+    const predsWithTime = await apiGet('/api/predictions-with-time');
+    // 按 match_id 分组
+    const byMatch = {};
+    for (const p of predsWithTime) {
+      const key = `${p.match_date}_${p.match_id}`;
+      if (!byMatch[key]) byMatch[key] = [];
+      byMatch[key].push(p);
+    }
+    // 笨鸟先飞：每天按最早提交时间排，第1名得N分(N=当天人数)，最后1名得1分
+    const byDate = {};
+    for (const p of predsWithTime) {
+      if (!byDate[p.match_date]) byDate[p.match_date] = {};
+      if (!byDate[p.match_date][p.nickname] || p.created_at < byDate[p.match_date][p.nickname]) {
+        byDate[p.match_date][p.nickname] = p.created_at;
+      }
+    }
+    for (const [date, submissions] of Object.entries(byDate)) {
+      const sorted = Object.entries(submissions).sort((a, b) => a[1].localeCompare(b[1]));
+      const total = sorted.length;
+      sorted.forEach(([name], i) => {
+        if (!earlyBirdScores[name]) earlyBirdScores[name] = 0;
+        earlyBirdScores[name] += total - i;
+      });
+    }
+
+    // 每场比赛：如果后面的人跟前面某人比分一样，算一次抄袭
+    for (const [key, preds] of Object.entries(byMatch)) {
+      // 已按 created_at 排序
+      for (let i = 1; i < preds.length; i++) {
+        for (let j = 0; j < i; j++) {
+          if (preds[i].home_score === preds[j].home_score && preds[i].away_score === preds[j].away_score) {
+            const copier = preds[i].nickname;
+            if (!copycatCounts[copier]) copycatCounts[copier] = 0;
+            copycatCounts[copier]++;
+            break;
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  const copycatRanking = Object.entries(copycatCounts)
+    .filter(([_, count]) => count >= 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  const earlyBirdRanking = Object.entries(earlyBirdScores)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // 计算高光时刻和黑色一天（单日最高/最低分）
+  const dayScores = [];
+  for (const date of completeDates2) {
+    const matches = SCHEDULE[date] || [];
+    for (const name of MEMBERS) {
+      const preds = allPreds[name] || {};
+      let dayPoints = 0, participated = false;
+      for (const m of matches) {
+        const pred = preds[m.id];
+        const actual = allResults[m.id];
+        if (!pred || !actual) continue;
+        participated = true;
+        const pH = pred.home, pA = pred.away;
+        const aH = actual.home, aA = actual.away;
+        const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+        const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+        if (pH === aH && pA === aA) dayPoints += 5;
+        else if (pR === aR && (pH-pA) === (aH-aA)) dayPoints += 3;
+        else if (pR === aR) dayPoints += 2;
+      }
+      if (participated) dayScores.push({ name, date, points: dayPoints });
+    }
+  }
+  const highlightTop3 = [...dayScores].sort((a, b) => b.points - a.points).slice(0, 3);
+  const lowlightTop3 = [...dayScores].sort((a, b) => a.points - b.points).slice(0, 3);
+
+  // 计算心有灵犀（两两配对，数相同比分场次）
+  const soulmatePairs = [];
+  for (let i = 0; i < MEMBERS.length; i++) {
+    for (let j = i + 1; j < MEMBERS.length; j++) {
+      const a = MEMBERS[i], b = MEMBERS[j];
+      const predsA = allPreds[a] || {}, predsB = allPreds[b] || {};
+      let sameCount = 0;
+      for (const [matchId, predA] of Object.entries(predsA)) {
+        const predB = predsB[matchId];
+        if (predB && predA.home === predB.home && predA.away === predB.away) sameCount++;
+      }
+      if (sameCount > 0) soulmatePairs.push({ a, b, count: sameCount });
+    }
+  }
+  soulmatePairs.sort((x, y) => y.count - x.count);
+  const top3Pairs = soulmatePairs.slice(0, 3);
 
   // 渲染成就列表
   let html = '';
   for (const ach of ACHIEVEMENT_DEFS) {
-    const earners = MEMBERS.filter(name => ach.check(memberStats[name]));
-    const locked = earners.length === 0;
-
-    html += `<div class="card" style="opacity:${locked ? '0.5' : '1'};">
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:24px;">${ach.icon}</span>
-        <div style="flex:1;">
-          <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
-          <div style="font-size:11px;color:#888;">${ach.desc}</div>
+    // 排名制成就（通用）
+    if (ach.isRanked) {
+      const ranking = MEMBERS
+        .map(name => ({ name, value: memberStats[name][ach.stat] || 0 }))
+        .filter(r => r.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 3);
+      const hasAny = ranking.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
         </div>
-        ${locked ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
-      </div>
-      ${earners.length > 0 ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
-        ${earners.map(name => `<span style="display:inline-block;padding:3px 8px;margin:2px;background:#0f3460;border-radius:10px;font-size:11px;">${name} <span style="color:#f5a623;">${ach.progress(memberStats[name])}</span></span>`).join('')}
-      </div>` : ''}
-    </div>`;
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${ranking.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
+            ${r.name} <span style="color:#f5a623;">${r.value}${ach.unit}</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 高光时刻
+    if (ach.isSpecial && ach.specialType === 'highlight') {
+      const hasAny = highlightTop3.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${highlightTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:#f5a623;">${medals[i]}</span>
+            ${r.name} <span style="color:#f5a623;">${r.points}分</span> <span style="color:#666;">(${r.date})</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 黑色一天
+    if (ach.isSpecial && ach.specialType === 'lowlight') {
+      const hasAny = lowlightTop3.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${lowlightTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:#e94560;">${medals[i]}</span>
+            ${r.name} <span style="color:#e94560;">${r.points}分</span> <span style="color:#666;">(${r.date})</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 笨鸟先飞
+    if (ach.isSpecial && ach.id === 'early_bird') {
+      const hasAny = earlyBirdRanking.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${earlyBirdRanking.map(([name, score], i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
+            ${name} <span style="color:#4CAF50;">速度分${score}</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 抄袭之王
+    if (ach.isSpecial && ach.id === 'copycat') {
+      const hasAny = copycatRanking.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${copycatRanking.map(([name, count], i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:${i === 0 ? '#e94560' : '#888'};">${medals[i]}</span>
+            ${name} <span style="color:#e94560;">${count}次抄袭</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 心有灵犀
+    if (ach.isSpecial && ach.id === 'soulmate') {
+      const hasAny = top3Pairs.length > 0 && top3Pairs[0].count >= 1;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${top3Pairs.length > 0 ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${top3Pairs.map((p, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
+            ${p.a} & ${p.b} <span style="color:#f5a623;">${p.count}场相同</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
   }
 
   container.innerHTML = html;
