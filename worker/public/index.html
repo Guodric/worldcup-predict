@@ -1169,25 +1169,53 @@ async function renderAchievements() {
     const dayAllResults = matches.length > 0 && matches.every(m => allResults[m.id]);
     if (!dayAllResults) continue;
 
+    const usePoints = date >= '2026-06-13';
     const dayUsers = [];
     for (const name of MEMBERS) {
       const preds = allPreds[name] || {};
-      let correct = 0, gdTotal = 0, goalTotal = 0, participated = false;
+      let correct = 0, gdTotal = 0, goalTotal = 0, points = 0, goalDiff = 0, participated = false;
       for (const m of matches) {
         const pred = preds[m.id];
         const actual = allResults[m.id];
         if (!pred || !actual) continue;
         participated = true;
-        const a = analyzeMatch(pred, actual);
-        if (a.resultCorrect) correct++;
-        gdTotal += a.gdDiff;
-        goalTotal += a.goalDiff;
+        const pH = pred.home, pA = pred.away;
+        const aH = actual.home, aA = actual.away;
+        const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+        const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+        if (pR === aR) correct++;
+        if (pH === aH && pA === aA) points += 5;
+        else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
+        else if (pR === aR) points += 2;
+        gdTotal += Math.abs((pH-pA) - (aH-aA));
+        goalTotal += Math.abs(pH-aH) + Math.abs(pA-aA);
+        goalDiff += Math.abs(pH-aH) + Math.abs(pA-aA);
       }
-      if (participated) dayUsers.push({ nickname: name, correct, gdTotal, goalTotal });
+      if (participated) dayUsers.push({ nickname: name, correct, gdTotal, goalTotal, points, goalDiff });
     }
 
-    dayUsers.sort(compareStats);
-    const ranked = assignRanks(dayUsers);
+    if (usePoints) {
+      dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
+    } else {
+      dayUsers.sort(compareStats);
+    }
+
+    // 分配排名
+    const ranked = [];
+    for (let i = 0; i < dayUsers.length; i++) {
+      let rank = i + 1;
+      if (i > 0) {
+        const prev = dayUsers[i-1], cur = dayUsers[i];
+        let tied;
+        if (usePoints) {
+          tied = cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff;
+        } else {
+          tied = cur.correct === prev.correct && cur.gdTotal === prev.gdTotal && cur.goalTotal === prev.goalTotal;
+        }
+        if (tied) rank = ranked[i-1].rank;
+      }
+      ranked.push({ ...dayUsers[i], rank });
+    }
     dailyRanks[date] = {};
     for (const r of ranked) {
       dailyRanks[date][r.nickname] = r.rank;
