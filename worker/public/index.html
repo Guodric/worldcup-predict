@@ -1072,17 +1072,17 @@ function calcPool(numPlayers, numMatches) {
 
 // ============ 成就系统 ============
 const ACHIEVEMENT_DEFS = [
+  { id: 'champion3', icon: '🏆', name: '冠军收割机', desc: '谁拿冠军最多？', stat: 'wins', unit: '次冠军', isRanked: true },
   { id: 'sniper', icon: '🎯', name: '神射手', desc: '谁精确命中最多？', stat: 'exactHits', unit: '次命中', isRanked: true },
   { id: 'streak3', icon: '🔥', name: '常胜将军', desc: '谁进前三最多？', stat: 'top3Count', unit: '次前三', isRanked: true },
-  { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '谁猜中冷门最多？', stat: 'upsetHits', unit: '次冷门', isRanked: true },
-  { id: 'reverse', icon: '📉', name: '反向指标', desc: '谁没进前三最多？', stat: 'notTop3Count', unit: '次落榜', isRanked: true },
-  { id: 'champion3', icon: '🏆', name: '冠军收割机', desc: '谁拿冠军最多？', stat: 'wins', unit: '次冠军', isRanked: true },
   { id: 'perfect_day', icon: '👑', name: '高光时刻', desc: '单日最高分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'highlight' },
-  { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日最低分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'lowlight' },
+  { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '谁猜中冷门最多？(赔率>3.0)', stat: 'upsetHits', unit: '次冷门', isRanked: true, color: '#2196F3' },
   { id: 'draw_master', icon: '🤝', name: '和棋大师', desc: '谁猜中平局最多？', stat: 'drawHits', unit: '次平局', isRanked: true },
-  { id: 'early_bird', icon: '🐦', name: '笨鸟先飞', desc: '谁交的最早？', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日最低分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'lowlight' },
+  { id: 'reverse', icon: '📉', name: '反向指标', desc: '谁没进前三最多？', stat: 'notTop3Count', unit: '次落榜', isRanked: true },
   { id: 'rocket', icon: '🚀', name: '火箭升空', desc: '单日最大排名跃升', stat: 'maxRankJump', unit: '位跃升', isRanked: true },
   { id: 'freefall', icon: '🪂', name: '自由落体', desc: '单日最大排名跌落', stat: 'maxRankDrop', unit: '位跌落', isRanked: true },
+  { id: 'early_bird', icon: '🐦', name: '笨鸟先飞', desc: '谁交的最早？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'copycat', icon: '🐱', name: '抄袭之王', desc: '别人先猜了，你跟着猜一样的', check: () => false, progress: () => '', isSpecial: true },
 ];
@@ -1390,7 +1390,7 @@ async function renderAchievements() {
         ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
           ${ranking.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
             <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
-            ${r.name} <span style="color:#f5a623;">${r.value}${ach.unit}</span>
+            ${r.name} <span style="color:${ach.color || '#f5a623'};">${r.value}${ach.unit}</span>
           </div>`).join('')}
         </div>` : ''}
       </div>`;
