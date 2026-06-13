@@ -750,21 +750,30 @@ async function handleAPI(url, request, env) {
       return json(grouped, 200, headers);
     }
 
-    // GET /api/predictions-with-time - 所有预测含提交时间
+    // GET /api/predictions-with-time - 所有预测含首次提交时间（from audit_log）
     if (url.pathname === '/api/predictions-with-time' && request.method === 'GET') {
+      // 用 audit_log 的首次提交时间（不受后续修改影响）
       const { results } = await env.DB.prepare(
-        'SELECT nickname, match_date, match_id, home_score, away_score, created_at FROM predictions ORDER BY match_date, match_id, created_at'
+        `SELECT p.nickname, p.match_date, p.match_id, p.home_score, p.away_score,
+         COALESCE(a.first_time, p.created_at) as created_at
+         FROM predictions p
+         LEFT JOIN (
+           SELECT nickname, match_date, MIN(created_at) as first_time
+           FROM audit_log WHERE action='predict'
+           GROUP BY nickname, match_date
+         ) a ON p.nickname = a.nickname AND p.match_date = a.match_date
+         ORDER BY p.match_date, COALESCE(a.first_time, p.created_at)`
       ).all();
       return json(results, 200, headers);
     }
 
-    // GET /api/first-submitters - 每天谁第一个提交
+    // GET /api/first-submitters - 每天谁第一个提交（用audit_log首次时间）
     if (url.pathname === '/api/first-submitters' && request.method === 'GET') {
       const { results } = await env.DB.prepare(
         `SELECT match_date, nickname, MIN(created_at) as first_submit
-         FROM predictions GROUP BY match_date, nickname ORDER BY match_date, first_submit`
+         FROM audit_log WHERE action='predict'
+         GROUP BY match_date, nickname ORDER BY match_date, first_submit`
       ).all();
-      // 每天取第一个
       const firstByDate = {};
       for (const r of results) {
         if (!firstByDate[r.match_date]) firstByDate[r.match_date] = r.nickname;

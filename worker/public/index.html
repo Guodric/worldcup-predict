@@ -966,7 +966,17 @@ async function renderHistory() {
         return `<div style="display:grid;grid-template-columns:28px 60px 1fr 50px 70px;align-items:center;padding:8px 0;border-bottom:1px solid #0f3460;">
           <span style="text-align:center;">${medal}</span>
           <span style="font-weight:600;font-size:13px;white-space:nowrap;">${r.nickname}${arrow}</span>
-          <span style="font-size:11px;color:#888;text-align:center;white-space:nowrap;">${usePointsSystem ? `${r.points}分 (${r.details.join(' ')})` : `✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}`}</span>
+          <span style="font-size:11px;color:#888;text-align:center;white-space:nowrap;">${usePointsSystem ? (() => {
+            const exact = r.details.filter(d => d.startsWith('🎯')).length;
+            const gd = r.details.filter(d => d.startsWith('👍')).length;
+            const win = r.details.filter(d => d.startsWith('✅')).length;
+            let s = r.points + '分';
+            if (exact) s += ` 🎯${exact}`;
+            if (gd) s += ` 👍${gd}`;
+            if (win) s += ` ✅${win}`;
+            if (!exact && !gd && !win) s += ' ❌';
+            return s;
+          })() : `✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}`}</span>
           <span style="font-size:13px;color:#f5a623;font-weight:bold;text-align:right;">${prize ? `+¥${prize}` : ''}</span>
           <span style="display:flex;gap:0;align-items:center;justify-content:flex-end;">
             <button onclick="react('${historyDate}','${r.nickname}','flower')" style="background:none;border:none;font-size:13px;cursor:pointer;padding:2px 4px;min-width:32px;text-align:center;">🌹${flowerCount || ''}</button>
@@ -1096,8 +1106,10 @@ const ACHIEVEMENT_DEFS = [
   { id: 'rocket', icon: '🚀', name: '火箭升空', desc: '单日最大排名跃升', stat: 'maxRankJump', unit: '位跃升', isRanked: true },
   { id: 'freefall', icon: '🪂', name: '自由落体', desc: '单日最大排名跌落', stat: 'maxRankDrop', unit: '位跌落', isRanked: true },
   { id: 'early_bird', icon: '🐦', name: '笨鸟先飞', desc: '谁交的最早？', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'latecomer', icon: '🏃', name: '大忙人', desc: '谁最忙顾不上交？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'copycat', icon: '🐱', name: '抄袭之王', desc: '别人先猜了，你跟着猜一样的', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'sponsor', icon: '💰', name: '赞助商', desc: '感谢金主爸爸', check: () => false, progress: () => '', isSpecial: true, specialType: 'sponsor' },
 ];
 
 async function renderAchievements() {
@@ -1336,6 +1348,10 @@ async function renderAchievements() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
+  const latecomerRanking = Object.entries(earlyBirdScores)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 3);
+
   // 计算高光时刻和黑色一天（单日最高/最低分）
   const dayScores = [];
   for (const date of completeDates2) {
@@ -1382,6 +1398,25 @@ async function renderAchievements() {
   // 渲染成就列表
   let html = '';
   for (const ach of ACHIEVEMENT_DEFS) {
+    // 赞助商
+    if (ach.isSpecial && ach.specialType === 'sponsor') {
+      html += `<div class="card">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          <div style="padding:3px 0;font-size:12px;">
+            <span style="color:#f5a623;">🥇</span> 林彪 <span style="color:#f5a623;">¥100</span>
+          </div>
+        </div>
+      </div>`;
+      continue;
+    }
+
     // 排名制成就（通用）
     if (ach.isRanked) {
       const ranking = MEMBERS
@@ -1473,6 +1508,29 @@ async function renderAchievements() {
           ${earlyBirdRanking.map(([name, score], i) => `<div style="padding:3px 0;font-size:12px;">
             <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
             ${name} <span style="color:#4CAF50;">速度分${score}</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 大忙人
+    if (ach.isSpecial && ach.id === 'latecomer') {
+      const hasAny = latecomerRanking.length > 0;
+      const medals = ['🥇', '🥈', '🥉'];
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${latecomerRanking.map(([name, score], i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:${i === 0 ? '#e94560' : '#888'};">${medals[i]}</span>
+            ${name} <span style="color:#e94560;">速度分${score}</span>
           </div>`).join('')}
         </div>` : ''}
       </div>`;
