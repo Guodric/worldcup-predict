@@ -256,13 +256,6 @@ async function generateSummaryForDate(env, today) {
     for (const r of todayResults) resultMap[r.match_id] = r;
   }
 
-  // 判断是否开赛
-  const now = new Date();
-  const [kickH, kickM] = FIRST_MATCH_TIME[today].split(':').map(Number);
-  const kickoff = new Date(today + 'T00:00:00Z');
-  kickoff.setUTCHours(kickH - 8, kickM, 0, 0);
-  const isPreMatch = now < kickoff;
-
   // 计算当天应有多少场比赛（通过 MATCH_LOOKUP 查找）
   let expectedMatches = 0;
   for (const [key] of Object.entries(MATCH_LOOKUP)) {
@@ -270,9 +263,12 @@ async function generateSummaryForDate(env, today) {
   }
   const allResultsIn = hasResults && todayResults.length >= expectedMatches;
 
-  let prompt, isFinal;
+  // 只在所有比赛结果齐全后生成最终总结
+  if (!allResultsIn) return;
 
-  if (allResultsIn) {
+  let prompt;
+  const isFinal = 1;
+  {
     // ===== 阶段3：赛后最终总结（所有比赛结果都录入后）=====
     // 计算排名（积分制：5/3/2/0，同分看净胜球偏差再看进球偏差）
     const dayUsers = [];
@@ -355,52 +351,6 @@ async function generateSummaryForDate(env, today) {
 看谁翻身变英雄。
 
 ${statsText}`;
-    isFinal = 1;
-
-  } else if (isPreMatch) {
-    // ===== 阶段1：赛前滚动总结 =====
-    const participants = Object.keys(userPreds);
-    let statsText = `已提交预测的人: ${participants.join('、')} (共${participants.length}人)\n\n`;
-
-    // 用 MATCH_LOOKUP 反查队名
-    const matchNames = {};
-    for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
-      if (!key.endsWith(today)) continue;
-      const parts = key.replace(`-${today}`, '');
-      const idx = parts.indexOf('-');
-      matchNames[mid] = { home: parts.substring(0, idx), away: parts.substring(idx + 1) };
-    }
-
-    // 统计大家的预测倾向
-    const matchPreds = {};
-    for (const [name, preds] of Object.entries(userPreds)) {
-      for (const p of preds) {
-        if (!matchPreds[p.match_id]) matchPreds[p.match_id] = [];
-        const result = p.home_score > p.away_score ? '主胜' : p.home_score < p.away_score ? '客胜' : '平局';
-        matchPreds[p.match_id].push({ name, pred: `${p.home_score}:${p.away_score}`, result });
-      }
-    }
-
-    for (const [matchId, preds] of Object.entries(matchPreds)) {
-      const mn = matchNames[matchId] || { home: '主队', away: '客队' };
-      statsText += `${mn.home} vs ${mn.away}:\n`;
-      for (const p of preds) {
-        statsText += `  ${p.name}: ${mn.home}${p.pred.split(':')[0]}:${mn.away}${p.pred.split(':')[1]} (${p.result})\n`;
-      }
-    }
-
-    prompt = `你是世界杯竞猜群的解说员。根据下面的预测数据写一句话点评（50字以内）。要求：只能提到数据中出现的人名，绝对不能编造或提到没出现在数据中的人。轻松有趣。不要markdown。
-
-例子1：林彪和球王都看好巴西赢，但比分分歧大，林彪激进猜巴西3:1，球王保守猜巴西2:1。
-例子2：五人全部押墨西哥，喂狗独树一帜猜墨西哥4:0大胜，是自信还是莽撞？
-例子3：球王猜韩国爆冷，其他人都看好德国，这波对决谁能封神？
-
-${statsText}`;
-    isFinal = 0;
-
-  } else {
-    // ===== 阶段2：比赛中，不生成 =====
-    return;
   }
 
   // 调用 AI

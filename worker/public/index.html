@@ -979,9 +979,8 @@ async function renderHistory() {
   try {
     const sumData = await apiGet(`/api/summary?date=${historyDate}`);
     if (sumData.summary) {
-      const isFinal = sumData.is_final;
-      const label = isFinal ? '🤖 AI 最终点评' : '🤖 AI 赛前点评（实时更新中）';
-      const borderColor = isFinal ? '#f5a623' : '#667eea';
+      const label = '🤖 AI 点评';
+      const borderColor = '#f5a623';
       summaryHtml = `<div class="card" style="border:1px solid ${borderColor};">
         <div style="font-size:12px;color:${borderColor};margin-bottom:6px;">${label}</div>
         <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary.replace(/\n/g, '<br>')}</div>
