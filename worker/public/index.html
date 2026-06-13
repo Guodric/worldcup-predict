@@ -123,6 +123,19 @@ h1 {
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 .toast.error { background: #e94560; }
+/* 精确命中金光动画 */
+@keyframes gold-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.exact-hit {
+  background: linear-gradient(90deg, transparent 0%, rgba(245,166,35,0.15) 25%, rgba(245,166,35,0.3) 50%, rgba(245,166,35,0.15) 75%, transparent 100%);
+  background-size: 200% 100%;
+  animation: gold-shimmer 2s ease-in-out infinite;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
 /* Confetti animation */
 .confetti-container {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -825,7 +838,8 @@ async function renderHistory() {
           badge = '<span class="result-badge badge-0">❌</span>';
         }
       }
-      return `<div class="pred-row"><span>${name}</span><span>${p.home}:${p.away}${badge}</span></div>`;
+      const rowClass = (actual && p.home === actual.home && p.away === actual.away) ? 'pred-row exact-hit' : 'pred-row';
+      return `<div class="${rowClass}"><span>${name}</span><span>${p.home}:${p.away}${badge}</span></div>`;
     }).join('');
 
     const localTime = bjTimeToLocal(historyDate, m.time);
