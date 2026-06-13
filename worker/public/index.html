@@ -107,8 +107,9 @@ h1 {
   font-size: 11px; font-weight: bold; margin-left: 6px;
 }
 .badge-5 { background: #f5a623; color: #000; }
+.badge-3 { background: #2196F3; color: #fff; }
 .badge-2 { background: #4CAF50; color: #fff; }
-.badge-1 { background: #2196F3; color: #fff; }
+.badge-1 { background: #4CAF50; color: #fff; }
 .badge-0 { background: #444; color: #888; }
 .actual-score { text-align: center; font-size: 16px; font-weight: bold; color: #4CAF50; margin: 4px 0; }
 .pred-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; color: #ccc; }
@@ -217,15 +218,18 @@ h1 {
     <div class="card rules">
       <h3>💰 每日奖池</h3>
       <p>每人每场 <strong>5元</strong>，奖池 = 参与人数 × 5 × 当日场次</p>
-      <p>🥇 第一名：<strong>60%</strong></p>
+      <p>🥇 第一名：<strong>50%</strong></p>
       <p>🥈 第二名：<strong>30%</strong></p>
-      <p>🥉 第三名：<strong>10%</strong></p>
-      <p style="font-size:11px;color:#666;margin-top:4px;">不满7人也按实际参与人数计算</p>
+      <p>🥉 第三名：<strong>20%</strong></p>
+      <p style="font-size:11px;color:#666;margin-top:4px;">不满7人也按实际参与人数计算，并列平分</p>
 
-      <h3>🎯 排名规则（逐条比较，前条平才看后条）</h3>
-      <p>1️⃣ <strong>猜对胜负平场次</strong>（多者赢）</p>
-      <p>2️⃣ <strong>净胜球偏差</strong>（逐场 |你猜净胜球 - 实际净胜球| 之和，小者赢）</p>
-      <p>3️⃣ <strong>进球偏差</strong>（逐场逐队 |你猜主队进球-实际| + |客队| 之和，小者赢）</p>
+      <h3>🎯 积分规则（6月13日起）</h3>
+      <p>每场比赛独立计分：</p>
+      <p>🎯 <strong>精确命中比分：5分</strong></p>
+      <p>👍 <strong>猜对胜负平+净胜球：3分</strong></p>
+      <p>✅ <strong>猜对胜负平：2分</strong></p>
+      <p>❌ <strong>猜错胜负平：0分</strong></p>
+      <p style="margin-top:4px;">同分时先看净胜球偏差（|猜净胜球-实际净胜球| 之和，小者赢），再看进球偏差（逐队 |猜-实际| 之和，小者赢）</p>
 
       <h3>📋 参与规则</h3>
       <p>• 每天所有比赛必须全部预测</p>
@@ -234,11 +238,11 @@ h1 {
       <p>• 每天独立结算，互不影响</p>
 
       <h3>💡 举例</h3>
-      <p>实际：巴西 2:1 德国（主胜，净胜球+1，总进球3）</p>
-      <p>小A猜 3:0 → 胜负✅ 净胜球偏差|3-1|=2 进球偏差|3-2|+|0-1|=2</p>
-      <p>小B猜 2:0 → 胜负✅ 净胜球偏差|2-1|=1 进球偏差|2-2|+|0-1|=1</p>
-      <p>小C猜 0:1 → 胜负❌</p>
-      <p>→ 小A小B胜负都对，看净胜球偏差，小B=1 < 小A=2，<strong>小B赢</strong></p>
+      <p>实际：巴西 2:1 德国</p>
+      <p>猜 2:1 → 精确命中 🎯 <strong>5分</strong></p>
+      <p>猜 3:2 → 胜负对+净胜球对 👍 <strong>3分</strong></p>
+      <p>猜 3:0 → 胜负对 ✅ <strong>2分</strong></p>
+      <p>猜 0:1 → 胜负错 ❌ <strong>0分</strong></p>
     </div>
   </div>
 
@@ -393,7 +397,7 @@ const FLAGS = {
 const API = '';
 
 function getToday() {
-  return new Date().toISOString().split('T')[0];
+  return getNowBeijing().toISOString().split('T')[0];
 }
 
 function getNowBeijing() {
@@ -431,16 +435,16 @@ function isDayFinished(date) {
   return now >= endApprox;
 }
 
-// 判断某天比赛结束后是否超过6小时（用于战报默认显示当天）
-function isDayPast6Hours(date) {
+// 判断某天比赛结束后是否超过3小时（用于战报默认显示当天）
+function isDayPast3Hours(date) {
   const matches = SCHEDULE[date];
   if (!matches || !matches.length) return false;
   const lastTime = matches[matches.length - 1].time;
   const [h, m] = lastTime.split(':').map(Number);
   const now = getNowBeijing();
-  const sixHoursAfter = new Date(date + 'T00:00:00');
-  sixHoursAfter.setHours(h + 8, m, 0, 0);
-  return now >= sixHoursAfter;
+  const threeHoursAfter = new Date(date + 'T00:00:00');
+  threeHoursAfter.setHours(h + 5, m, 0, 0);
+  return now >= threeHoursAfter;
 }
 
 // 竞猜面板应该显示哪天的比赛
@@ -466,7 +470,7 @@ function findHistoryDate() {
   const today = getToday();
   const dates = getScheduleDates();
   // 今天有比赛且还没过6小时，显示今天
-  if (SCHEDULE[today] && !isDayPast6Hours(today)) return today;
+  if (SCHEDULE[today] && !isDayPast3Hours(today)) return today;
   // 否则找最近一个已结束的比赛日
   for (let i = dates.length - 1; i >= 0; i--) {
     if (dates[i] <= today && SCHEDULE[dates[i]]) return dates[i];
@@ -810,8 +814,11 @@ async function renderHistory() {
       if (actual) {
         const a = analyzeMatch(p, actual);
         const isExact = p.home === actual.home && p.away === actual.away;
+        const gdMatch = (p.home - p.away) === (actual.home - actual.away);
         if (isExact) {
           badge = '<span class="result-badge badge-5">🎯</span>';
+        } else if (a.resultCorrect && gdMatch) {
+          badge = '<span class="result-badge badge-3">👍</span>';
         } else if (a.resultCorrect) {
           badge = '<span class="result-badge badge-2">✅</span>';
         } else {
@@ -837,16 +844,60 @@ async function renderHistory() {
 
   // 判断当天结果是否全齐
   const allResultsComplete = matches.length > 0 && matches.every(m => results[m.id]);
+  const usePointsSystem = historyDate >= '2026-06-13';
 
   // 当日排行：全齐=最终排名，部分=临时排名，无=预加载
   let rankingHtml = '';
   if (hasResults && Object.keys(predictions).length > 0) {
-    const dayRanking = Object.entries(predictions).map(([name, preds]) => {
-      const stats = calcDayStats(preds, matches, results);
-      return { nickname: name, ...stats };
-    }).sort(compareStats);
+    let dayRanking;
+    if (usePointsSystem) {
+      // 积分制：5/3/2/0 + 同分看进球偏差
+      dayRanking = Object.entries(predictions).map(([name, preds]) => {
+        let points = 0, goalDiff = 0, correct = 0, gdTotal = 0, goalTotal = 0;
+        const details = [];
+        for (const m of matches) {
+          const pred = preds[m.id];
+          const actual = results[m.id];
+          if (!pred || !actual) continue;
+          const pH = pred.home, pA = pred.away;
+          const aH = actual.home, aA = actual.away;
+          const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+          const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+          goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
+          if (pH === aH && pA === aA) { points += 5; correct++; details.push('🎯5'); }
+          else if (pR === aR && (pH-pA) === (aH-aA)) { points += 3; correct++; details.push('👍3'); }
+          else if (pR === aR) { points += 2; correct++; details.push('✅2'); }
+          else { details.push('❌0'); }
+          gdTotal += Math.abs((pH-pA) - (aH-aA));
+          goalTotal += Math.abs(pH-aH) + Math.abs(pA-aA);
+        }
+        return { nickname: name, points, goalDiff, correct, gdTotal, goalTotal, details };
+      }).sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
+    } else {
+      // 旧规则：胜负>净胜偏差>进球偏差
+      dayRanking = Object.entries(predictions).map(([name, preds]) => {
+        const stats = calcDayStats(preds, matches, results);
+        return { nickname: name, ...stats };
+      }).sort(compareStats);
+    }
 
-    const ranked = assignRanks(dayRanking);
+    // 分配排名
+    let ranked;
+    if (usePointsSystem) {
+      ranked = [];
+      for (let i = 0; i < dayRanking.length; i++) {
+        let rank = i + 1;
+        if (i > 0) {
+          const prev = dayRanking[i-1], cur = dayRanking[i];
+          if (cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff) {
+            rank = ranked[i-1].rank;
+          }
+        }
+        ranked.push({ ...dayRanking[i], rank });
+      }
+    } else {
+      ranked = assignRanks(dayRanking);
+    }
     const medals = ['🥇', '🥈', '🥉'];
     const pool = calcPool(ranked.length, matches.length);
 
@@ -890,7 +941,7 @@ async function renderHistory() {
         const thumbsCount = rx.thumbsdown || 0;
         const medal = r.rank <= 3 ? medals[r.rank-1] : `${r.rank}.`;
         const tiedCount = ranked.filter(x => x.rank === r.rank).length;
-        const prize = calcPrizeForRank(pool, r.rank, tiedCount);
+        const prize = calcPrizeForRank(pool, r.rank, tiedCount, usePointsSystem);
         let arrow = '';
         const prev = prevRanks[r.nickname];
         if (prev) {
@@ -901,7 +952,7 @@ async function renderHistory() {
         return `<div style="display:grid;grid-template-columns:28px 60px 1fr 50px 70px;align-items:center;padding:8px 0;border-bottom:1px solid #0f3460;">
           <span style="text-align:center;">${medal}</span>
           <span style="font-weight:600;font-size:13px;white-space:nowrap;">${r.nickname}${arrow}</span>
-          <span style="font-size:11px;color:#888;text-align:center;white-space:nowrap;">✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}</span>
+          <span style="font-size:11px;color:#888;text-align:center;white-space:nowrap;">${usePointsSystem ? `${r.points}分 (${r.details.join(' ')})` : `✅${r.correct} 净${r.gdTotal} 球${r.goalTotal}`}</span>
           <span style="font-size:13px;color:#f5a623;font-weight:bold;text-align:right;">${prize ? `+¥${prize}` : ''}</span>
           <span style="display:flex;gap:0;align-items:center;justify-content:flex-end;">
             <button onclick="react('${historyDate}','${r.nickname}','flower')" style="background:none;border:none;font-size:13px;cursor:pointer;padding:2px 4px;min-width:32px;text-align:center;">🌹${flowerCount || ''}</button>
@@ -911,12 +962,13 @@ async function renderHistory() {
       }).join('')}
     </div>`;
   } else {
+    const preloadLabel = usePointsSystem ? '0分' : '✅0场 · 净0 · 球0';
     rankingHtml = `<div class="card">
       <div style="font-size:13px;font-weight:bold;margin-bottom:8px;color:#f5a623;">📊 当日排名</div>
       ${MEMBERS.map(name => `<div class="lb-item" style="padding:6px 0;">
         <span style="width:24px;text-align:center;">—</span>
         <span class="lb-name">${name}</span>
-        <span style="font-size:11px;color:#888;">✅0场 · 净0 · 球0</span>
+        <span style="font-size:11px;color:#888;">${preloadLabel}</span>
       </div>`).join('')}
       <div style="text-align:center;margin-top:8px;font-size:11px;color:#666;">比赛结果录入后自动计算</div>
     </div>`;
@@ -1005,8 +1057,8 @@ function assignRanks(sorted) {
 }
 
 // 奖金计算：并列平分，合并占据位置的奖金比例
-function calcPrizeForRank(pool, rank, tiedCount) {
-  const rates = [0.6, 0.3, 0.1];
+function calcPrizeForRank(pool, rank, tiedCount, useNewRates) {
+  const rates = useNewRates ? [0.5, 0.3, 0.2] : [0.6, 0.3, 0.1];
   let totalRate = 0;
   for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) {
     totalRate += rates[pos - 1] || 0;

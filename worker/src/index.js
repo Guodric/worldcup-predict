@@ -270,10 +270,11 @@ async function generateSummaryForDate(env, today) {
 
   if (allResultsIn) {
     // ===== 阶段3：赛后最终总结（所有比赛结果都录入后）=====
-    // 计算排名
+    // 计算排名（积分制：5/3/2/0，同分看净胜球偏差再看进球偏差）
     const dayUsers = [];
     for (const [name, preds] of Object.entries(userPreds)) {
-      let correct = 0, gdTotal = 0, goalTotal = 0, exactHits = 0;
+      let points = 0, gdTotal = 0, goalDiff = 0;
+      const details = [];
       for (const p of preds) {
         const actual = resultMap[p.match_id];
         if (!actual) continue;
@@ -281,49 +282,68 @@ async function generateSummaryForDate(env, today) {
         const aH = actual.home_score, aA = actual.away_score;
         const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
         const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
-        if (pR === aR) correct++;
-        if (pH === aH && pA === aA) exactHits++;
+        if (pH === aH && pA === aA) { points += 5; details.push('🎯5'); }
+        else if (pR === aR && (pH-pA) === (aH-aA)) { points += 3; details.push('👍3'); }
+        else if (pR === aR) { points += 2; details.push('✅2'); }
+        else { details.push('❌0'); }
         gdTotal += Math.abs((pH - pA) - (aH - aA));
-        goalTotal += Math.abs(pH - aH) + Math.abs(pA - aA);
+        goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
       }
-      dayUsers.push({ name, correct, gdTotal, goalTotal, exactHits, total: preds.length });
+      dayUsers.push({ name, points, gdTotal, goalDiff, details, total: preds.length });
     }
-    dayUsers.sort((a, b) => {
-      if (a.correct !== b.correct) return b.correct - a.correct;
-      if (a.gdTotal !== b.gdTotal) return a.gdTotal - b.gdTotal;
-      return a.goalTotal - b.goalTotal;
-    });
+    dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
 
     const numMatches = todayResults.length;
     const pool = dayUsers.length * 5 * numMatches;
-    const prizeRates = [0.6, 0.3, 0.1];
+    const prizeRates = [0.5, 0.3, 0.2];
 
     let statsText = `今日${numMatches}场比赛，${dayUsers.length}人参与，奖池¥${pool}\n\n当日排名:\n`;
     let rank = 1;
     for (let i = 0; i < dayUsers.length; i++) {
       if (i > 0) {
         const prev = dayUsers[i-1], cur = dayUsers[i];
-        if (cur.correct !== prev.correct || cur.gdTotal !== prev.gdTotal || cur.goalTotal !== prev.goalTotal) rank = i + 1;
+        if (!(cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff)) rank = i + 1;
       }
       const u = dayUsers[i];
       const tiedCount = dayUsers.filter((_, j) => {
         let r = 1;
         for (let k = 1; k <= j; k++) {
           const p2 = dayUsers[k-1], c2 = dayUsers[k];
-          if (c2.correct !== p2.correct || c2.gdTotal !== p2.gdTotal || c2.goalTotal !== p2.goalTotal) r = k + 1;
+          if (!(c2.points === p2.points && c2.gdTotal === p2.gdTotal && c2.goalDiff === p2.goalDiff)) r = k + 1;
         }
         return r === rank;
       }).length;
       let totalRate = 0;
       for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
       const prize = Math.round((pool * totalRate) / tiedCount);
-      statsText += `第${rank}名: ${u.name} (${u.correct}/${u.total}场胜负对, ${u.exactHits}次精确命中, 奖金+¥${prize})\n`;
+      statsText += `第${rank}名: ${u.name} (${u.points}分 ${u.details.join(' ')}, 奖金+¥${prize})\n`;
     }
 
-    prompt = `你是世界杯竞猜群的解说员。根据当日最终排名写一句话总结（50字以内），幽默、点名、有梗。不要markdown。严格只提到数据中出现的人名，不要编造。
+    // 查明天比赛信息
+    const todayIdx = Object.keys(FIRST_MATCH_TIME).sort().indexOf(today);
+    const allMatchDates = Object.keys(FIRST_MATCH_TIME).sort();
+    const tomorrowDate = todayIdx >= 0 && todayIdx < allMatchDates.length - 1 ? allMatchDates[todayIdx + 1] : null;
+    let tomorrowInfo = '';
+    if (tomorrowDate) {
+      const tomorrowMatches = [];
+      for (const [key] of Object.entries(MATCH_LOOKUP)) {
+        if (key.endsWith(tomorrowDate)) {
+          const parts = key.replace(`-${tomorrowDate}`, '');
+          const idx2 = parts.indexOf('-');
+          tomorrowMatches.push(`${parts.substring(0, idx2)} vs ${parts.substring(idx2 + 1)}`);
+        }
+      }
+      if (tomorrowMatches.length > 0) {
+        tomorrowInfo = `\n明日(${tomorrowDate})比赛: ${tomorrowMatches.join('、')}，共${tomorrowMatches.length}场，竞猜费${dayUsers.length * 5 * tomorrowMatches.length}元`;
+      }
+    }
 
-例子1：方烁今日登顶精确命中封神，喂狗垫底建议回家种地。
-例子2：球王独占鳌头赢走42块，佩雷兹和林彪并列第二平分奖金。
+    statsText += tomorrowInfo;
+
+    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.预告明天比赛。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。
+
+例子：
+6.13 结果总结及颁奖：泳佳凭借准确预测了加拿大vs波黑的结果，在新规加持的第一天，获得5分，得到今日🥇，将获得35元奖金。球王，林彪，佩雷兹，方烁与喂狗都猜对了一场比赛的胜负，球王以净胜球差优势获得🥈，将获得21元奖金。林彪佩雷兹以进球数差优势力压方烁喂狗并列🥉，将各获得7元奖金。航班本日竞猜两场皆墨，急需调整状态。6.14比赛日将迎来第一个4场比赛的比赛日，且有巴西vs摩洛哥的焦点之战。本日竞猜费为20元，是领先集团扩大优势，还是落后集团一举翻身，让我们拭目以待！
 
 ${statsText}`;
     isFinal = 1;
@@ -354,19 +374,17 @@ ${statsText}`;
 
     for (const [matchId, preds] of Object.entries(matchPreds)) {
       const mn = matchNames[matchId] || { home: '主队', away: '客队' };
-      const odds = oddsMap[matchId];
-      const oddsStr = odds ? `(赔率 主${odds.home} 平${odds.draw} 客${odds.away})` : '';
-      statsText += `${mn.home} vs ${mn.away} ${oddsStr}:\n`;
+      statsText += `${mn.home} vs ${mn.away}:\n`;
       for (const p of preds) {
-        statsText += `  ${p.name}: ${p.pred} (${p.result})\n`;
+        statsText += `  ${p.name}: ${mn.home}${p.pred.split(':')[0]}:${mn.away}${p.pred.split(':')[1]} (${p.result})\n`;
       }
     }
 
     prompt = `你是世界杯竞猜群的解说员。根据下面的预测数据写一句话点评（50字以内）。要求：只能提到数据中出现的人名，绝对不能编造或提到没出现在数据中的人。轻松有趣。不要markdown。
 
-例子1（2人已猜）：林彪和球王都看好主胜，但比分分歧大，林彪激进猜3:1，球王保守2:1。
-例子2（5人已猜）：五人全部押主胜，喂狗独树一帜猜大比分4:0，是自信还是莽撞？
-例子3（3人已猜）：球王、林彪、佩雷兹三人交卷，两人看好主胜一人赌平局，分歧不大。
+例子1：林彪和球王都看好巴西赢，但比分分歧大，林彪激进猜巴西3:1，球王保守猜巴西2:1。
+例子2：五人全部押墨西哥，喂狗独树一帜猜墨西哥4:0大胜，是自信还是莽撞？
+例子3：球王猜韩国爆冷，其他人都看好德国，这波对决谁能封神？
 
 ${statsText}`;
     isFinal = 0;
@@ -380,7 +398,7 @@ ${statsText}`;
   try {
     const aiRes = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 100,
+      max_tokens: isFinal ? 400 : 100,
     });
 
     const summary = aiRes.response || '';
@@ -589,10 +607,11 @@ async function handleAPI(url, request, env) {
       const totalCost = {};
 
       for (const date of datesWithResults) {
+        const useNewRule = date >= '2026-06-13';
         const dayUsers = [];
         for (const [key, data] of Object.entries(byDateUser)) {
           if (data.date !== date) continue;
-          let correct = 0, gdTotal = 0, goalTotal = 0;
+          let correct = 0, gdTotal = 0, goalTotal = 0, points = 0, goalDiff = 0;
           for (const p of data.preds) {
             const actual = resultMap[p.match_id];
             if (!actual) continue;
@@ -603,30 +622,43 @@ async function handleAPI(url, request, env) {
             if (pR === aR) correct++;
             gdTotal += Math.abs((pH - pA) - (aH - aA));
             goalTotal += Math.abs(pH - aH) + Math.abs(pA - aA);
+            goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
+            // 积分制
+            if (pH === aH && pA === aA) points += 5;
+            else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
+            else if (pR === aR) points += 2;
           }
-          dayUsers.push({ nickname: data.nickname, correct, gdTotal, goalTotal });
+          dayUsers.push({ nickname: data.nickname, correct, gdTotal, goalTotal, points, goalDiff });
         }
 
-        // Sort: correct DESC, gdTotal ASC, goalTotal ASC
-        dayUsers.sort((a, b) => {
-          if (a.correct !== b.correct) return b.correct - a.correct;
-          if (a.gdTotal !== b.gdTotal) return a.gdTotal - b.gdTotal;
-          return a.goalTotal - b.goalTotal;
-        });
+        // 排序：新规则用积分+偏差，旧规则用胜负>净胜偏差>进球偏差
+        if (useNewRule) {
+          dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
+        } else {
+          dayUsers.sort((a, b) => {
+            if (a.correct !== b.correct) return b.correct - a.correct;
+            if (a.gdTotal !== b.gdTotal) return a.gdTotal - b.gdTotal;
+            return a.goalTotal - b.goalTotal;
+          });
+        }
 
         // 奖池 = 参与人数 × 5 × 当日场次
         const numMatches = actuals.filter(r => r.match_date === date).length;
         const pool = dayUsers.length * 5 * numMatches;
-        const prizeRates = [0.6, 0.3, 0.1]; // 第1/2/3名的分配比例
+        const prizeRates = useNewRule ? [0.5, 0.3, 0.2] : [0.6, 0.3, 0.1];
 
         // 分配排名
         let rank = 1;
         const ranks = [1];
         for (let i = 1; i < dayUsers.length; i++) {
           const prev = dayUsers[i-1], cur = dayUsers[i];
-          if (cur.correct !== prev.correct || cur.gdTotal !== prev.gdTotal || cur.goalTotal !== prev.goalTotal) {
-            rank = i + 1;
+          let tied;
+          if (useNewRule) {
+            tied = cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff;
+          } else {
+            tied = cur.correct === prev.correct && cur.gdTotal === prev.gdTotal && cur.goalTotal === prev.goalTotal;
           }
+          if (!tied) rank = i + 1;
           ranks.push(rank);
         }
 
