@@ -330,6 +330,43 @@ async function generateSummaryForDate(env, today) {
       ).bind(today, u.name, rank, u.points, prize).run();
     }
 
+    // 存总排行 snapshot
+    const { results: allDailyRankings } = await env.DB.prepare(
+      "SELECT nickname, SUM(prize) as total_earnings FROM daily_rankings WHERE match_date <= ? GROUP BY nickname"
+    ).bind(today).all();
+    const { results: allCosts } = await env.DB.prepare(
+      "SELECT nickname, COUNT(DISTINCT match_date) as days FROM daily_rankings WHERE match_date <= ? GROUP BY nickname"
+    ).bind(today).all();
+    // 计算每人总cost（需要知道每天几场）
+    const costMap = {};
+    for (const c of allCosts) {
+      // 简化：从 daily_rankings 的天数 × 每天平均cost 不准确，直接从 predictions 算
+      costMap[c.nickname] = 0;
+    }
+    const { results: costData } = await env.DB.prepare(
+      "SELECT p.nickname, p.match_date, COUNT(DISTINCT p.match_id) as matches FROM predictions p INNER JOIN results r ON p.match_date = r.match_date AND r.status = 'final' WHERE p.match_date <= ? GROUP BY p.nickname, p.match_date"
+    ).bind(today).all();
+    for (const c of costData) {
+      if (!costMap[c.nickname]) costMap[c.nickname] = 0;
+      costMap[c.nickname] += 5 * c.matches;
+    }
+
+    const totalRanking = allDailyRankings.map(r => ({
+      nickname: r.nickname,
+      total_earnings: r.total_earnings || 0,
+      total_cost: costMap[r.nickname] || 0,
+      net: (r.total_earnings || 0) - (costMap[r.nickname] || 0),
+    })).sort((a, b) => b.net - a.net);
+
+    for (let i = 0; i < totalRanking.length; i++) {
+      const t = totalRanking[i];
+      await env.DB.prepare(
+        `INSERT INTO total_rankings_snapshot (match_date, nickname, total_earnings, total_cost, net, rank)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(match_date, nickname) DO UPDATE SET total_earnings=excluded.total_earnings, total_cost=excluded.total_cost, net=excluded.net, rank=excluded.rank`
+      ).bind(today, t.nickname, t.total_earnings, t.total_cost, t.net, i + 1).run();
+    }
+
     // 查明天比赛信息
     const todayIdx = Object.keys(FIRST_MATCH_TIME).sort().indexOf(today);
     const allMatchDates = Object.keys(FIRST_MATCH_TIME).sort();
@@ -351,7 +388,11 @@ async function generateSummaryForDate(env, today) {
 
     statsText += tomorrowInfo;
 
-    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.预告明天比赛（不要提具体奖池金额）4.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯5表示精确命中一场得5分，✅2表示猜对胜负得2分，👍3表示猜对净胜球得3分，❌0表示猜错得0分。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
+    // 加入总排行信息
+    statsText += `\n\n当前总排行(净收益): `;
+    statsText += totalRanking.map((t, i) => `${i+1}.${t.nickname}(${t.net >= 0 ? '+' : ''}${t.net})`).join(' ');
+
+    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.提一句总排行变化 4.预告明天比赛（不要提具体奖池金额）5.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯5表示精确命中一场得5分，✅2表示猜对胜负得2分，👍3表示猜对净胜球得3分，❌0表示猜错得0分。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
 
 例子：
 6.13 结果总结及颁奖：泳佳凭借准确预测了加拿大vs波黑的结果，在新规加持的第一天，获得5分，得到今日🥇，将获得35元奖金。球王，林彪，佩雷兹，方烁与喂狗都猜对了一场比赛的胜负，球王以净胜球差优势获得🥈，将获得21元奖金。林彪佩雷兹以进球数差优势力压方烁喂狗并列🥉，将各获得7元奖金。航班本日竞猜两场皆墨，急需调整状态。6.14比赛日将迎来第一个4场比赛的比赛日，且有巴西vs摩洛哥的焦点之战。本日竞猜费为20元，是领先集团扩大优势，还是落后集团一举翻身，让我们拭目以待！
@@ -380,7 +421,25 @@ ${statsText}`;
       }),
     });
     const aiData = await aiRes.json();
-    const summary = aiData?.content?.[0]?.text || '';
+    let summary = aiData?.content?.[0]?.text || '';
+    // 国家名加国旗emoji
+    const FLAG_EMOJI = {
+      '墨西哥':'🇲🇽','美国':'🇺🇸','加拿大':'🇨🇦','巴西':'🇧🇷','阿根廷':'🇦🇷',
+      '乌拉圭':'🇺🇾','德国':'🇩🇪','法国':'🇫🇷','西班牙':'🇪🇸','葡萄牙':'🇵🇹',
+      '英格兰':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','荷兰':'🇳🇱','比利时':'🇧🇪','克罗地亚':'🇭🇷',
+      '日本':'🇯🇵','韩国':'🇰🇷','澳大利亚':'🇦🇺','沙特':'🇸🇦','伊朗':'🇮🇷',
+      '喀麦隆':'🇨🇲','塞尔维亚':'🇷🇸','加纳':'🇬🇭','瑞士':'🇨🇭',
+      '摩洛哥':'🇲🇦','塞内加尔':'🇸🇳','厄瓜多尔':'🇪🇨','哥伦比亚':'🇨🇴',
+      '埃及':'🇪🇬','突尼斯':'🇹🇳','南非':'🇿🇦','捷克':'🇨🇿',
+      '波黑':'🇧🇦','卡塔尔':'🇶🇦','海地':'🇭🇹','苏格兰':'🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+      '巴拉圭':'🇵🇾','土耳其':'🇹🇷','库拉索':'🇨🇼','科特迪瓦':'🇨🇮',
+      '瑞典':'🇸🇪','新西兰':'🇳🇿','佛得角':'🇨🇻',
+      '伊拉克':'🇮🇶','挪威':'🇳🇴','阿尔及利亚':'🇩🇿','奥地利':'🇦🇹','约旦':'🇯🇴',
+      '刚果(金)':'🇨🇩','乌兹别克斯坦':'🇺🇿','巴拿马':'🇵🇦',
+    };
+    for (const [name, flag] of Object.entries(FLAG_EMOJI)) {
+      summary = summary.replace(new RegExp(name, 'g'), flag);
+    }
     if (summary.length > 10) {
       // Upsert: 赛前总结可覆盖，赛后锁定
       await env.DB.prepare(
