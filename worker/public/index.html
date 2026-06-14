@@ -239,7 +239,7 @@ h1 {
       <h3>🎯 积分规则（6月13日起）</h3>
       <p>每场比赛独立计分：</p>
       <p>🎯 <strong>精确命中比分：5分</strong></p>
-      <p>👍 <strong>猜对胜负平+净胜球：3分</strong></p>
+      <p>👍 <strong>猜对胜负平+净胜球：3分</strong>（平局不适用）</p>
       <p>✅ <strong>猜对胜负平：2分</strong></p>
       <p>❌ <strong>猜错胜负平：0分</strong></p>
       <p style="margin-top:4px;">同分时先看净胜球偏差（|猜净胜球-实际净胜球| 之和，小者赢），再看进球偏差（逐队 |猜-实际| 之和，小者赢）</p>
@@ -828,9 +828,10 @@ async function renderHistory() {
         const a = analyzeMatch(p, actual);
         const isExact = p.home === actual.home && p.away === actual.away;
         const gdMatch = (p.home - p.away) === (actual.home - actual.away);
+        const isDrawResult = actual.home === actual.away;
         if (isExact) {
           badge = '<span class="result-badge badge-5">🎯</span>';
-        } else if (a.resultCorrect && gdMatch) {
+        } else if (a.resultCorrect && gdMatch && !isDrawResult) {
           badge = '<span class="result-badge badge-3">👍</span>';
         } else if (a.resultCorrect) {
           badge = '<span class="result-badge badge-2">✅</span>';
@@ -879,7 +880,7 @@ async function renderHistory() {
           const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
           goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
           if (pH === aH && pA === aA) { points += 5; correct++; details.push('🎯5'); }
-          else if (pR === aR && (pH-pA) === (aH-aA)) { points += 3; correct++; details.push('👍3'); }
+          else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') { points += 3; correct++; details.push('👍3'); }
           else if (pR === aR) { points += 2; correct++; details.push('✅2'); }
           else { details.push('❌0'); }
           gdTotal += Math.abs((pH-pA) - (aH-aA));

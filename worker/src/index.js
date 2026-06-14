@@ -283,7 +283,7 @@ async function generateSummaryForDate(env, today) {
         const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
         const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
         if (pH === aH && pA === aA) { points += 5; details.push('🎯5'); }
-        else if (pR === aR && (pH-pA) === (aH-aA)) { points += 3; details.push('👍3'); }
+        else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') { points += 3; details.push('👍3'); }
         else if (pR === aR) { points += 2; details.push('✅2'); }
         else { details.push('❌0'); }
         gdTotal += Math.abs((pH - pA) - (aH - aA));
@@ -609,7 +609,7 @@ async function handleAPI(url, request, env) {
             goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
             // 积分制
             if (pH === aH && pA === aA) points += 5;
-            else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
+            else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') points += 3;
             else if (pR === aR) points += 2;
           }
           dayUsers.push({ nickname: data.nickname, correct, gdTotal, goalTotal, points, goalDiff });
@@ -867,7 +867,7 @@ async function handleAPI(url, request, env) {
             const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
             if (pR === aR) correct++;
             if (pH === aH && pA === aA) points += 5;
-            else if (pR === aR && (pH-pA) === (aH-aA)) points += 3;
+            else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') points += 3;
             else if (pR === aR) points += 2;
             gdTotal += Math.abs((pH-pA) - (aH-aA));
             goalDiff += Math.abs(pH-aH) + Math.abs(pA-aA);
@@ -918,7 +918,7 @@ async function handleAPI(url, request, env) {
             const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
             const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
             if (pH === aH && pA === aA) { exactHits++; dayPoints += 5; }
-            else if (pR === aR && (pH-pA) === (aH-aA)) dayPoints += 3;
+            else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') dayPoints += 3;
             else if (pR === aR) dayPoints += 2;
             if (pR === aR && aH === aA && pH === pA) drawHits++;
             // 冷门
