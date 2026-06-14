@@ -111,7 +111,7 @@ h1 {
 .badge-2 { background: #4CAF50; color: #fff; }
 .badge-1 { background: #4CAF50; color: #fff; }
 .badge-0 { background: #444; color: #888; }
-.actual-score { text-align: center; font-size: 16px; font-weight: bold; color: #4CAF50; margin: 4px 0; }
+.actual-score { text-align: center; font-size: 16px; font-weight: bold; color: #eee; margin: 4px 0; }
 .pred-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; color: #ccc; }
 .rules { font-size: 13px; line-height: 2; color: #aaa; }
 .rules h3 { color: #e94560; margin: 10px 0 6px; }
@@ -783,12 +783,14 @@ async function renderHistory() {
   let results = {};
   let predictions = {};
   try {
+    // 先触发一次实时拉取（带30秒缓存，不会频繁请求外部API）
+    await apiGet('/api/live-scores').catch(() => {});
     const [resData, predData] = await Promise.all([
       apiGet(`/api/results?date=${historyDate}`),
       apiGet(`/api/predictions?date=${historyDate}`)
     ]);
     for (const r of (resData || [])) {
-      results[r.match_id] = { home: r.home_score, away: r.away_score };
+      results[r.match_id] = { home: r.home_score, away: r.away_score, status: r.status || 'final' };
     }
     predictions = predData || {};
   } catch (e) {}
@@ -802,10 +804,12 @@ async function renderHistory() {
     const af = FLAGS[m.away] || '';
     const actual = results[m.id];
     let actualStr = '';
-    if (actual) {
+    if (actual && actual.status === 'live') {
+      actualStr = `<span style="color:#4CAF50;">⚽ ${actual.home} : ${actual.away} 比赛中</span>`;
+    } else if (actual && actual.status === 'final') {
       actualStr = `${actual.home} : ${actual.away}`;
     } else {
-      // 根据比赛时间判断状态
+      // 没有数据，用时间估算
       const [mh, mm] = m.time.split(':').map(Number);
       const now = getNowBeijing();
       const kickoff = new Date(historyDate + 'T00:00:00');
@@ -858,7 +862,9 @@ async function renderHistory() {
   }).join('');
 
   // 判断当天结果是否全齐
-  const allResultsComplete = matches.length > 0 && matches.every(m => results[m.id]);
+  const finalResults = Object.fromEntries(Object.entries(results).filter(([_, r]) => r.status === 'final'));
+  const hasLiveResults = Object.values(results).some(r => r.status === 'live');
+  const allResultsComplete = matches.length > 0 && matches.every(m => finalResults[m.id]);
   const usePointsSystem = historyDate >= '2026-06-13';
 
   // 当日排行：全齐=最终排名，部分=临时排名，无=预加载
@@ -934,8 +940,8 @@ async function renderHistory() {
     let reactions = {};
     try { reactions = await apiGet(`/api/reactions?date=${historyDate}`); } catch(e) {}
 
-    const rankLabel = allResultsComplete ? '📊 当日排名' : '📊 临时排名（部分结果）';
-    const rankLabelColor = allResultsComplete ? '#f5a623' : '#888';
+    const rankLabel = allResultsComplete ? '📊 当日排名' : (hasLiveResults ? '⚽ 实时排名' : '📊 临时排名（部分结果）');
+    const rankLabelColor = allResultsComplete ? '#f5a623' : (hasLiveResults ? '#4CAF50' : '#888');
     rankingHtml = `<div class="card">
       <div style="font-size:13px;font-weight:bold;margin-bottom:4px;color:${rankLabelColor};">${rankLabel}</div>
       <div style="font-size:11px;color:#888;margin-bottom:8px;">${ranked.length}人 × ${matches.length}场 × ¥5 = 奖池 ¥${pool}</div>
@@ -976,16 +982,8 @@ async function renderHistory() {
       }).join('')}
     </div>`;
   } else {
-    const preloadLabel = usePointsSystem ? '0分' : '✅0场 · 净0 · 球0';
-    rankingHtml = `<div class="card">
-      <div style="font-size:13px;font-weight:bold;margin-bottom:8px;color:#f5a623;">📊 当日排名</div>
-      ${MEMBERS.map(name => `<div class="lb-item" style="padding:6px 0;">
-        <span style="width:24px;text-align:center;">—</span>
-        <span class="lb-name">${name}</span>
-        <span style="font-size:11px;color:#888;">${preloadLabel}</span>
-      </div>`).join('')}
-      <div style="text-align:center;margin-top:8px;font-size:11px;color:#666;">比赛结果录入后自动计算</div>
-    </div>`;
+    // 没有结果时不显示排名卡
+    rankingHtml = '';
   }
 
   // AI 点评
@@ -998,16 +996,24 @@ async function renderHistory() {
       summaryHtml = `<div class="card" style="border:1px solid ${borderColor};">
         <div style="font-size:12px;color:${borderColor};margin-bottom:6px;">${label}</div>
         <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary.replace(/\n/g, '<br>')}</div>
+        <div style="text-align:right;margin-top:8px;">
+          <button onclick="deleteSummaryAndRefresh('${historyDate}')" style="background:none;border:none;color:#666;font-size:11px;cursor:pointer;">🔄 重新生成</button>
+        </div>
+      </div>`;
+    } else if (allResultsComplete) {
+      summaryHtml = `<div class="card" style="border:1px dashed #667eea;text-align:center;padding:16px;">
+        <button onclick="generateSummary('${historyDate}')" class="btn" style="width:auto;padding:10px 20px;font-size:13px;">🤖 生成AI总结</button>
       </div>`;
     }
   } catch(e) {}
 
-  // 全齐：排名在上面；部分/无结果：排名在下面
-  if (allResultsComplete) {
+  // 有结果（live或final）：排名在上面；无结果：不显示排名
+  if (hasResults) {
     container.innerHTML = rankingHtml + summaryHtml + html;
   } else {
-    container.innerHTML = html + summaryHtml + rankingHtml;
+    container.innerHTML = html;
   }
+
 }
 
 function changeDate(delta) {
@@ -1498,6 +1504,38 @@ async function react(date, target, reaction) {
     await apiPost('/api/react', { date, target, reaction, from_user: fromUser });
     showToast(reaction === 'flower' ? '🌹 已送花' : '👎 已点踩');
     // 刷新战报显示最新数量
+    renderHistory();
+  } catch(e) {}
+}
+
+// ============ 生成AI总结 ============
+async function generateSummary(date) {
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ 生成中...';
+  btn.style.opacity = '0.6';
+  try {
+    const res = await apiPost('/api/sync', { password: 'worldcup2026' });
+    if (res.ok) {
+      btn.textContent = '✅ 完成';
+      setTimeout(() => renderHistory(), 500);
+    } else {
+      btn.textContent = '❌ 失败，点击重试';
+      btn.disabled = false;
+      btn.style.opacity = '1';
+    }
+  } catch(e) {
+    btn.textContent = '❌ 失败，点击重试';
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
+// ============ 重新生成AI总结 ============
+async function deleteSummaryAndRefresh(date) {
+  try {
+    await apiPost('/api/test-summary', { date });
     renderHistory();
   } catch(e) {}
 }

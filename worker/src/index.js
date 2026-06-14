@@ -93,18 +93,19 @@ export default {
     }
   },
 
-  // Cron Trigger: 每小时自动拉取比赛结果、赔率，并生成AI点评
+  // Cron Trigger: 自动拉取比赛结果和赔率（AI总结由手动触发）
   async scheduled(event, env, ctx) {
     await fetchAndStoreResults(env);
     await fetchAndStoreOdds(env);
-    await generateDaySummary(env);
     await generateMatchPrompt(env);
   }
 };
 
 async function fetchAndStoreResults(env) {
   const API_TOKEN = env.FOOTBALL_API_TOKEN || '6a4ad18e3d4e4403ac2461e0fe98e53e';
-  const res = await fetch('https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED', {
+
+  // 拉取进行中+已结束的比赛
+  const res = await fetch('https://api.football-data.org/v4/competitions/WC/matches?status=IN_PLAY,PAUSED,FINISHED', {
     headers: { 'X-Auth-Token': API_TOKEN }
   });
 
@@ -113,9 +114,10 @@ async function fetchAndStoreResults(env) {
   const matches = data.matches || [];
 
   for (const m of matches) {
-    const homeScore = m.score?.fullTime?.home;
-    const awayScore = m.score?.fullTime?.away;
-    if (homeScore === null || awayScore === null) continue;
+    const isLive = m.status === 'IN_PLAY' || m.status === 'PAUSED';
+    const homeScore = isLive ? m.score?.fullTime?.home ?? m.score?.halfTime?.home : m.score?.fullTime?.home;
+    const awayScore = isLive ? m.score?.fullTime?.away ?? m.score?.halfTime?.away : m.score?.fullTime?.away;
+    if (homeScore === null || homeScore === undefined || awayScore === null || awayScore === undefined) continue;
 
     const homeName = TEAM_MAP[m.homeTeam?.name] || m.homeTeam?.name;
     const awayName = TEAM_MAP[m.awayTeam?.name] || m.awayTeam?.name;
@@ -130,11 +132,13 @@ async function fetchAndStoreResults(env) {
 
     if (!matchId) continue;
 
+    const status = isLive ? 'live' : 'final';
+
     await env.DB.prepare(
-      `INSERT INTO results (match_id, match_date, home_score, away_score)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, updated_at=datetime('now')`
-    ).bind(matchId, dateStr, homeScore, awayScore).run();
+      `INSERT INTO results (match_id, match_date, home_score, away_score, status)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status=excluded.status, updated_at=datetime('now')`
+    ).bind(matchId, dateStr, homeScore, awayScore, status).run();
   }
 }
 
@@ -236,7 +240,7 @@ async function generateSummaryForDate(env, today) {
 
   // 获取今天的比赛结果（可能还没有）
   const { results: todayResults } = await env.DB.prepare(
-    'SELECT * FROM results WHERE match_date = ?'
+    "SELECT * FROM results WHERE match_date = ? AND status = 'final'"
   ).bind(today).all();
 
   // 获取赔率
@@ -557,7 +561,7 @@ async function handleAPI(url, request, env) {
       ).all();
 
       const { results: actuals } = await env.DB.prepare(
-        'SELECT match_id, match_date, home_score, away_score FROM results'
+        "SELECT match_id, match_date, home_score, away_score FROM results WHERE status = 'final'"
       ).all();
 
       const resultMap = {};
@@ -707,9 +711,9 @@ async function handleAPI(url, request, env) {
       }
 
       await env.DB.prepare(
-        `INSERT INTO results (match_id, match_date, home_score, away_score)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, updated_at=datetime('now')`
+        `INSERT INTO results (match_id, match_date, home_score, away_score, status)
+         VALUES (?, ?, ?, ?, 'final')
+         ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status='final', updated_at=datetime('now')`
       ).bind(match_id, date, home_score, away_score).run();
 
       return json({ ok: true }, 200, headers);
@@ -788,6 +792,40 @@ async function handleAPI(url, request, env) {
       return json(firstByDate, 200, headers);
     }
 
+    // GET /api/test-summary - 测试：删除某天总结以显示生成按钮
+    if (url.pathname === '/api/test-summary' && request.method === 'POST') {
+      const body = await request.json();
+      const { date } = body;
+      if (!date) return json({ error: '需要date' }, 400, headers);
+      await env.DB.prepare('DELETE FROM summaries WHERE match_date = ?').bind(date).run();
+      return json({ ok: true, msg: `已删除${date}的总结，刷新战报可看到生成按钮` }, 200, headers);
+    }
+
+    // GET /api/live-scores - 实时比分（带30秒缓存）
+    if (url.pathname === '/api/live-scores' && request.method === 'GET') {
+      // 检查上次拉取时间
+      const cache = await env.DB.prepare(
+        "SELECT value, updated_at FROM live_cache WHERE key = 'last_fetch'"
+      ).first();
+
+      const now = new Date();
+      const lastFetch = cache?.updated_at ? new Date(cache.updated_at + 'Z') : null;
+      const needsFetch = !lastFetch || (now - lastFetch) > 30000;
+
+      if (needsFetch) {
+        await fetchAndStoreResults(env);
+        await env.DB.prepare(
+          "INSERT INTO live_cache (key, value, updated_at) VALUES ('last_fetch', '1', datetime('now')) ON CONFLICT(key) DO UPDATE SET updated_at=datetime('now')"
+        ).run();
+      }
+
+      // 返回所有 live 状态的比分
+      const { results } = await env.DB.prepare(
+        "SELECT match_id, match_date, home_score, away_score, status FROM results WHERE status = 'live'"
+      ).all();
+      return json(results, 200, headers);
+    }
+
     // GET /api/daily-rankings?date=2026-06-12
     if (url.pathname === '/api/daily-rankings' && request.method === 'GET') {
       const date = url.searchParams.get('date');
@@ -810,7 +848,7 @@ async function handleAPI(url, request, env) {
         'SELECT nickname, match_date, match_id, home_score, away_score FROM predictions'
       ).all();
       const { results: allResults } = await env.DB.prepare(
-        'SELECT match_id, match_date, home_score, away_score FROM results'
+        "SELECT match_id, match_date, home_score, away_score FROM results WHERE status = 'final'"
       ).all();
       const { results: allOdds } = await env.DB.prepare(
         'SELECT match_id, home_odds, draw_odds, away_odds FROM odds'
