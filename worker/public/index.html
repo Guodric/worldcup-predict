@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#e94560">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>世界杯竞猜 2026</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -515,6 +520,7 @@ function renderNickChips() {
       chip.classList.add('selected');
       localStorage.setItem('wc_nickname', chip.dataset.name);
       document.getElementById('nickname').value = chip.dataset.name;
+      document.getElementById('submit-btn').textContent = `以「${chip.dataset.name}」提交`;
       renderMatches();
       setTimeout(loadMyPredictions, 300);
     });
@@ -994,7 +1000,8 @@ async function renderHistory() {
       summaryHtml = `<div class="card" style="border:1px solid ${borderColor};">
         <div style="font-size:12px;color:${borderColor};margin-bottom:6px;">${label}</div>
         <div style="font-size:13px;line-height:1.8;color:#ddd;">${sumData.summary.replace(/\n/g, '<br>')}</div>
-        <div style="text-align:right;margin-top:8px;">
+        <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:8px;">
+          <button onclick="copySummary(this)" data-text="${sumData.summary.replace(/"/g, '&quot;')}" style="background:none;border:none;color:#666;font-size:11px;cursor:pointer;">📋 复制</button>
           <button onclick="deleteSummaryAndRefresh('${historyDate}')" style="background:none;border:none;color:#666;font-size:11px;cursor:pointer;">🔄 重新生成</button>
         </div>
       </div>`;
@@ -1531,6 +1538,18 @@ async function react(date, target, reaction) {
   } catch(e) {}
 }
 
+// ============ 复制总结 ============
+async function copySummary(btn) {
+  const text = btn.dataset.text;
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => { btn.textContent = '📋 复制'; }, 2000);
+  } catch(e) {
+    showToast('复制失败', true);
+  }
+}
+
 // ============ 刷新比分 ============
 async function refreshLiveScores() {
   const btn = event.target;
@@ -1611,10 +1630,16 @@ if (saved) {
   document.querySelectorAll('.nick-chip').forEach(c => {
     if (c.dataset.name === saved) c.classList.add('selected');
   });
+  document.getElementById('submit-btn').textContent = `以「${saved}」提交`;
 }
 renderMatches();
 loadAIPrompt();
 if (saved) setTimeout(loadMyPredictions, 500);
+
+// PWA Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>
