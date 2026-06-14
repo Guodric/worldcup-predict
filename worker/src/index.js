@@ -275,6 +275,16 @@ async function generateSummaryForDate(env, today) {
   {
     // ===== 阶段3：赛后最终总结（所有比赛结果都录入后）=====
     // 计算排名（积分制：5/3/2/0，同分看净胜球偏差再看进球偏差）
+    // 反查 match_id → 队名
+    const matchTeams = {};
+    for (const [key, mid] of Object.entries(MATCH_LOOKUP)) {
+      if (key.endsWith(today)) {
+        const parts = key.replace(`-${today}`, '');
+        const idx2 = parts.indexOf('-');
+        matchTeams[mid] = { home: parts.substring(0, idx2), away: parts.substring(idx2 + 1) };
+      }
+    }
+
     const dayUsers = [];
     for (const [name, preds] of Object.entries(userPreds)) {
       let points = 0, gdTotal = 0, goalDiff = 0;
@@ -286,10 +296,12 @@ async function generateSummaryForDate(env, today) {
         const aH = actual.home_score, aA = actual.away_score;
         const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
         const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
-        if (pH === aH && pA === aA) { points += 5; details.push('🎯5'); }
-        else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') { points += 3; details.push('👍3'); }
-        else if (pR === aR) { points += 2; details.push('✅2'); }
-        else { details.push('❌0'); }
+        const teams = matchTeams[p.match_id];
+        const matchLabel = teams ? `${teams.home}vs${teams.away}` : p.match_id;
+        if (pH === aH && pA === aA) { points += 5; details.push(`🎯${matchLabel}猜${pH}:${pA}`); }
+        else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') { points += 3; details.push(`👍${matchLabel}`); }
+        else if (pR === aR) { points += 2; details.push(`✅${matchLabel}`); }
+        else { details.push(`❌${matchLabel}`); }
         gdTotal += Math.abs((pH - pA) - (aH - aA));
         goalDiff += Math.abs(pH - aH) + Math.abs(pA - aA);
       }
@@ -301,7 +313,13 @@ async function generateSummaryForDate(env, today) {
     const pool = dayUsers.length * 5 * numMatches;
     const prizeRates = [0.5, 0.3, 0.2];
 
-    let statsText = `今日${numMatches}场比赛，${dayUsers.length}人参与，奖池¥${pool}\n\n当日排名:\n`;
+    let statsText = `今日${numMatches}场比赛，${dayUsers.length}人参与，奖池¥${pool}\n`;
+    statsText += `实际比分: `;
+    for (const r of todayResults) {
+      const teams = matchTeams[r.match_id];
+      if (teams) statsText += `${teams.home}${r.home_score}:${r.away_score}${teams.away} `;
+    }
+    statsText += `\n\n当日排名:\n`;
     let rank = 1;
     for (let i = 0; i < dayUsers.length; i++) {
       if (i > 0) {
@@ -388,11 +406,27 @@ async function generateSummaryForDate(env, today) {
 
     statsText += tomorrowInfo;
 
-    // 加入总排行信息
-    statsText += `\n\n当前总排行(净收益): `;
+    // 加入总排行信息 + 前一天对比
+    const prevDate = allMatchDates[todayIdx - 1] || null;
+    let prevSnapshot = [];
+    if (prevDate) {
+      const { results: prevData } = await env.DB.prepare(
+        "SELECT nickname, net, rank FROM total_rankings_snapshot WHERE match_date = ? ORDER BY rank"
+      ).bind(prevDate).all();
+      prevSnapshot = prevData || [];
+    }
+
+    statsText += `\n\n前一天总排行: `;
+    if (prevSnapshot.length > 0) {
+      statsText += prevSnapshot.map(p => `${p.rank}.${p.nickname}(${p.net >= 0 ? '+' : ''}${p.net})`).join(' ');
+    } else {
+      statsText += '无';
+    }
+    statsText += `\n今天总排行: `;
     statsText += totalRanking.map((t, i) => `${i+1}.${t.nickname}(${t.net >= 0 ? '+' : ''}${t.net})`).join(' ');
 
-    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），包含：1.今日排名颁奖 2.亮点或槽点 3.提一句总排行变化 4.预告明天比赛（不要提具体奖池金额）5.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯5表示精确命中一场得5分，✅2表示猜对胜负得2分，👍3表示猜对净胜球得3分，❌0表示猜错得0分。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
+    const dateShort = today.replace('2026-', '').replace('-', '.');
+    prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），开头写"${dateShort} 结果总结及颁奖："，包含：1.今日排名颁奖（提到具体猜中了哪场比赛）2.亮点或槽点 3.提一句总排行变化 4.预告明天比赛（不要提具体奖池金额）5.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯表示精确命中一场得5分，✅表示猜对胜负得2分，👍表示猜对净胜球得3分，❌表示猜错得0分。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
 
 例子：
 6.13 结果总结及颁奖：泳佳凭借准确预测了加拿大vs波黑的结果，在新规加持的第一天，获得5分，得到今日🥇，将获得35元奖金。球王，林彪，佩雷兹，方烁与喂狗都猜对了一场比赛的胜负，球王以净胜球差优势获得🥈，将获得21元奖金。林彪佩雷兹以进球数差优势力压方烁喂狗并列🥉，将各获得7元奖金。航班本日竞猜两场皆墨，急需调整状态。6.14比赛日将迎来第一个4场比赛的比赛日，且有巴西vs摩洛哥的焦点之战。本日竞猜费为20元，是领先集团扩大优势，还是落后集团一举翻身，让我们拭目以待！
