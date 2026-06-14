@@ -783,8 +783,6 @@ async function renderHistory() {
   let results = {};
   let predictions = {};
   try {
-    // 先触发一次实时拉取（带30秒缓存，不会频繁请求外部API）
-    await apiGet('/api/live-scores').catch(() => {});
     const [resData, predData] = await Promise.all([
       apiGet(`/api/results?date=${historyDate}`),
       apiGet(`/api/predictions?date=${historyDate}`)
@@ -1007,11 +1005,26 @@ async function renderHistory() {
     }
   } catch(e) {}
 
+  // 刷新比分按钮：第一场已开赛 + 不是所有比赛都final
+  let refreshBtnHtml = '';
+  const firstMatch = matches[0];
+  if (firstMatch && !allResultsComplete) {
+    const [fh, fm] = firstMatch.time.split(':').map(Number);
+    const now = getNowBeijing();
+    const firstKickoff = new Date(historyDate + 'T00:00:00');
+    firstKickoff.setHours(fh, fm, 0, 0);
+    if (now >= firstKickoff) {
+      refreshBtnHtml = `<div style="text-align:center;margin-bottom:10px;">
+        <button onclick="refreshLiveScores()" class="btn" style="width:auto;padding:8px 16px;font-size:12px;background:linear-gradient(135deg,#4CAF50,#45a049);">🔄 刷新比分排名</button>
+      </div>`;
+    }
+  }
+
   // 有结果（live或final）：排名在上面；无结果：不显示排名
   if (hasResults) {
-    container.innerHTML = rankingHtml + summaryHtml + html;
+    container.innerHTML = refreshBtnHtml + rankingHtml + summaryHtml + html;
   } else {
-    container.innerHTML = html;
+    container.innerHTML = refreshBtnHtml + html;
   }
 
 }
@@ -1506,6 +1519,21 @@ async function react(date, target, reaction) {
     // 刷新战报显示最新数量
     renderHistory();
   } catch(e) {}
+}
+
+// ============ 刷新比分 ============
+async function refreshLiveScores() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ 刷新中...';
+  try {
+    await apiGet('/api/live-scores');
+    btn.textContent = '✅ 已刷新';
+    setTimeout(() => renderHistory(), 500);
+  } catch(e) {
+    btn.textContent = '❌ 失败';
+    btn.disabled = false;
+  }
 }
 
 // ============ 生成AI总结 ============
