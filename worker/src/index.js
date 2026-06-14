@@ -704,17 +704,18 @@ async function handleAPI(url, request, env) {
     // POST /api/result - 管理员录入结果 (简单密码验证)
     if (url.pathname === '/api/result' && request.method === 'POST') {
       const body = await request.json();
-      const { password, match_id, date, home_score, away_score } = body;
+      const { password, match_id, date, home_score, away_score, status } = body;
 
       if (password !== (env.ADMIN_PASSWORD || 'worldcup2026')) {
         return json({ error: '密码错误' }, 403, headers);
       }
 
+      const resultStatus = status || 'live';
       await env.DB.prepare(
         `INSERT INTO results (match_id, match_date, home_score, away_score, status)
-         VALUES (?, ?, ?, ?, 'final')
-         ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status='final', updated_at=datetime('now')`
-      ).bind(match_id, date, home_score, away_score).run();
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status=excluded.status, updated_at=datetime('now')`
+      ).bind(match_id, date, home_score, away_score, resultStatus).run();
 
       return json({ ok: true }, 200, headers);
     }

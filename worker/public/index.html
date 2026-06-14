@@ -1440,12 +1440,18 @@ function renderAdminMatches() {
     const hf = FLAGS[m.home] || '';
     const af = FLAGS[m.away] || '';
     return `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #0f3460;">
-      <span style="font-size:13px;flex:1;">${hf}${m.home}</span>
-      <input type="number" inputmode="numeric" min="0" max="20" id="rh_${m.id}" style="width:40px;height:34px;text-align:center;font-size:16px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
-      <span style="margin:0 4px;color:#888;">:</span>
-      <input type="number" inputmode="numeric" min="0" max="20" id="ra_${m.id}" style="width:40px;height:34px;text-align:center;font-size:16px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
-      <span style="font-size:13px;flex:1;text-align:right;">${m.away}${af}</span>
+    <div style="display:grid;grid-template-columns:1fr auto 1fr auto;align-items:center;padding:8px 0;border-bottom:1px solid #0f3460;gap:4px;">
+      <span style="font-size:12px;text-align:right;white-space:nowrap;">${hf}${m.home}</span>
+      <span style="display:flex;align-items:center;gap:4px;">
+        <input type="number" inputmode="numeric" min="0" max="20" id="rh_${m.id}" style="width:36px;height:32px;text-align:center;font-size:15px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
+        <span style="color:#888;">:</span>
+        <input type="number" inputmode="numeric" min="0" max="20" id="ra_${m.id}" style="width:36px;height:32px;text-align:center;font-size:15px;font-weight:bold;background:#0f3460;border:1px solid #e94560;border-radius:6px;color:#fff;outline:none;" />
+      </span>
+      <span style="font-size:12px;white-space:nowrap;">${m.away}${af}</span>
+      <label style="display:flex;align-items:center;gap:2px;">
+        <input type="checkbox" id="final_${m.id}" style="width:14px;height:14px;" />
+        <span style="font-size:10px;color:#888;">终</span>
+      </label>
     </div>`;
   }).join('');
 
@@ -1458,8 +1464,10 @@ async function loadExistingResults() {
     for (const r of (data || [])) {
       const hEl = document.getElementById(`rh_${r.match_id}`);
       const aEl = document.getElementById(`ra_${r.match_id}`);
+      const fEl = document.getElementById(`final_${r.match_id}`);
       if (hEl) hEl.value = r.home_score;
       if (aEl) aEl.value = r.away_score;
+      if (fEl) fEl.checked = r.status === 'final';
     }
   } catch (e) {}
 }
@@ -1488,12 +1496,14 @@ async function submitResults() {
     if (h === '' || a === '') continue;
 
     try {
+      const isFinal = document.getElementById(`final_${m.id}`)?.checked;
       const res = await apiPost('/api/result', {
         password,
         match_id: m.id,
         date: adminDate,
         home_score: parseInt(h),
-        away_score: parseInt(a)
+        away_score: parseInt(a),
+        status: isFinal ? 'final' : 'live'
       });
       if (res.ok) success++;
       else if (res.error === '密码错误') {
