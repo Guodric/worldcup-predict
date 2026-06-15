@@ -476,12 +476,24 @@ function findPredictDate() {
   const today = getToday();
   const dates = getScheduleDates();
 
-  // 如果今天有比赛且还没结束（包括进行中），显示今天
-  if (SCHEDULE[today] && !isDayFinished(today)) return today;
+  // PDT 9pm 后开放下一天（PDT = UTC-7）
+  const now = new Date();
+  const pdtHour = (now.getUTCHours() - 7 + 24) % 24;
+  const isPast9pmPST = pdtHour >= 21;
 
-  // 今天的结束了，找下一个有比赛的日期
+  if (isPast9pmPST) {
+    // 找明天（北京时间）之后最近的比赛日
+    for (const d of dates) {
+      if (d > today) return d;
+    }
+  }
+
+  // 还没到9pm，显示今天（如果有比赛）
+  if (SCHEDULE[today]) return today;
+
+  // 今天没比赛，找下一个有比赛的日期
   for (const d of dates) {
-    if (d > today) return d;
+    if (d >= today) return d;
   }
   return dates[dates.length - 1];
 }
@@ -1171,6 +1183,7 @@ const ACHIEVEMENT_DEFS = [
   { id: 'latecomer', icon: '🏃', name: '大忙人', desc: '谁最忙顾不上交？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'copycat', icon: '🐱', name: '抄袭之王', desc: '别人先猜了，你跟着猜一样的', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'live_fan', icon: '🏟️', name: '现场达人', desc: '谁现场看球最多？', check: () => false, progress: () => '', isSpecial: true, specialType: 'live_fan' },
   { id: 'sponsor', icon: '💰', name: '赞助商', desc: '感谢金主爸爸', check: () => false, progress: () => '', isSpecial: true, specialType: 'sponsor' },
 ];
 
@@ -1196,6 +1209,25 @@ async function renderAchievements() {
   let html = '';
 
   for (const ach of ACHIEVEMENT_DEFS) {
+    // 现场达人
+    if (ach.isSpecial && ach.specialType === 'live_fan') {
+      html += `<div class="card">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          <div style="padding:3px 0;font-size:12px;">
+            <span style="color:#f5a623;">🥇</span> 球王 <span style="color:#f5a623;">1场（🇧🇪vs🇪🇬）</span>
+          </div>
+        </div>
+      </div>`;
+      continue;
+    }
+
     // 赞助商
     if (ach.isSpecial && ach.specialType === 'sponsor') {
       html += `<div class="card">
