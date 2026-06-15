@@ -93,10 +93,11 @@ export default {
     }
   },
 
-  // Cron Trigger: 自动拉取比赛结果和赔率（AI总结由手动触发）
+  // Cron Trigger: 自动拉取比赛结果、赔率，结算排名
   async scheduled(event, env, ctx) {
     await fetchAndStoreResults(env);
     await fetchAndStoreOdds(env);
+    await settleAllDays(env);
     await generateMatchPrompt(env);
   }
 };
@@ -212,25 +213,158 @@ async function fetchAndStoreOdds(env) {
   }
 }
 
-async function generateDaySummary(env) {
-  // 检查所有有预测的比赛日（不只是今天）
+// 结算排名（写入 daily_rankings + total_rankings_snapshot，只执行一次）
+async function settleAllDays(env) {
   const { results: predDates } = await env.DB.prepare(
     'SELECT DISTINCT match_date FROM predictions ORDER BY match_date'
   ).all();
-
   for (const row of (predDates || [])) {
-    await generateSummaryForDate(env, row.match_date);
+    await settleDayRankings(env, row.match_date);
   }
 }
 
-async function generateSummaryForDate(env, today) {
+// AI 总结生成（只读数据，生成文字）
+async function generateAllSummaries(env) {
+  const { results: predDates } = await env.DB.prepare(
+    'SELECT DISTINCT match_date FROM predictions ORDER BY match_date'
+  ).all();
+  for (const row of (predDates || [])) {
+    await generateAISummary(env, row.match_date);
+  }
+}
+
+// 结算单日排名（只写一次，已有不覆盖）
+async function settleDayRankings(env, today) {
   if (!FIRST_MATCH_TIME[today]) return;
 
-  // 检查是否已有最终总结（锁定的不再更新）
+  // 已有排名就不重算
+  const hasRankings = await env.DB.prepare(
+    'SELECT 1 FROM daily_rankings WHERE match_date = ? LIMIT 1'
+  ).bind(today).first();
+  if (hasRankings) return;
+
+  // 检查结果是否齐全
+  const { results: todayResults } = await env.DB.prepare(
+    "SELECT * FROM results WHERE match_date = ? AND status = 'final'"
+  ).bind(today).all();
+  if (!todayResults || todayResults.length === 0) return;
+
+  let expectedMatches = 0;
+  for (const [key] of Object.entries(MATCH_LOOKUP)) {
+    if (key.endsWith(today)) expectedMatches++;
+  }
+  if (todayResults.length < expectedMatches) return;
+
+  // 获取预测
+  const { results: todayPreds } = await env.DB.prepare(
+    'SELECT * FROM predictions WHERE match_date = ?'
+  ).bind(today).all();
+  if (!todayPreds || todayPreds.length === 0) return;
+
+  const resultMap = {};
+  for (const r of todayResults) resultMap[r.match_id] = r;
+
+  const userPreds = {};
+  for (const p of todayPreds) {
+    if (!userPreds[p.nickname]) userPreds[p.nickname] = [];
+    userPreds[p.nickname].push(p);
+  }
+
+  // 计算排名
+  const dayUsers = [];
+  for (const [name, preds] of Object.entries(userPreds)) {
+    let points = 0, gdTotal = 0, goalDiff = 0;
+    for (const p of preds) {
+      const actual = resultMap[p.match_id];
+      if (!actual) continue;
+      const pH = p.home_score, pA = p.away_score;
+      const aH = actual.home_score, aA = actual.away_score;
+      const pR = pH > pA ? 'W' : pH < pA ? 'L' : 'D';
+      const aR = aH > aA ? 'W' : aH < aA ? 'L' : 'D';
+      if (pH === aH && pA === aA) points += 5;
+      else if (pR === aR && (pH-pA) === (aH-aA) && aR !== 'D') points += 3;
+      else if (pR === aR) points += 2;
+      gdTotal += Math.abs((pH-pA) - (aH-aA));
+      goalDiff += Math.abs(pH-aH) + Math.abs(pA-aA);
+    }
+    dayUsers.push({ name, points, gdTotal, goalDiff });
+  }
+  dayUsers.sort((a, b) => b.points - a.points || a.gdTotal - b.gdTotal || a.goalDiff - b.goalDiff);
+
+  const numMatches = todayResults.length;
+  const pool = dayUsers.length * 5 * numMatches;
+  const prizeRates = [0.5, 0.3, 0.2];
+
+  let rank = 1;
+  for (let i = 0; i < dayUsers.length; i++) {
+    if (i > 0) {
+      const prev = dayUsers[i-1], cur = dayUsers[i];
+      if (!(cur.points === prev.points && cur.gdTotal === prev.gdTotal && cur.goalDiff === prev.goalDiff)) rank = i + 1;
+    }
+    const u = dayUsers[i];
+    const tiedCount = dayUsers.filter((_, j) => {
+      let r2 = 1;
+      for (let k = 1; k <= j; k++) {
+        const p2 = dayUsers[k-1], c2 = dayUsers[k];
+        if (!(c2.points === p2.points && c2.gdTotal === p2.gdTotal && c2.goalDiff === p2.goalDiff)) r2 = k + 1;
+      }
+      return r2 === rank;
+    }).length;
+    let totalRate = 0;
+    for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
+    const prize = Math.round((pool * totalRate) / tiedCount);
+
+    await env.DB.prepare(
+      `INSERT INTO daily_rankings (match_date, nickname, rank, points, prize)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(match_date, nickname) DO UPDATE SET rank=excluded.rank, points=excluded.points, prize=excluded.prize`
+    ).bind(today, u.name, rank, u.points, prize).run();
+  }
+
+  // 存总排行 snapshot
+  const { results: allDailyRankings } = await env.DB.prepare(
+    "SELECT nickname, SUM(prize) as total_earnings FROM daily_rankings WHERE match_date <= ? GROUP BY nickname"
+  ).bind(today).all();
+  const { results: costData } = await env.DB.prepare(
+    "SELECT p.nickname, p.match_date, COUNT(DISTINCT p.match_id) as matches FROM predictions p INNER JOIN results r ON p.match_date = r.match_date AND r.status = 'final' WHERE p.match_date <= ? GROUP BY p.nickname, p.match_date"
+  ).bind(today).all();
+  const costMap = {};
+  for (const c of costData) {
+    if (!costMap[c.nickname]) costMap[c.nickname] = 0;
+    costMap[c.nickname] += 5 * c.matches;
+  }
+  const totalRanking = allDailyRankings.map(r => ({
+    nickname: r.nickname,
+    total_earnings: r.total_earnings || 0,
+    total_cost: costMap[r.nickname] || 0,
+    net: (r.total_earnings || 0) - (costMap[r.nickname] || 0),
+  })).sort((a, b) => b.net - a.net);
+
+  for (let i = 0; i < totalRanking.length; i++) {
+    const t = totalRanking[i];
+    await env.DB.prepare(
+      `INSERT INTO total_rankings_snapshot (match_date, nickname, total_earnings, total_cost, net, rank)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(match_date, nickname) DO UPDATE SET total_earnings=excluded.total_earnings, total_cost=excluded.total_cost, net=excluded.net, rank=excluded.rank`
+    ).bind(today, t.nickname, t.total_earnings, t.total_cost, t.net, i + 1).run();
+  }
+}
+
+// 生成AI总结（只读数据）
+async function generateAISummary(env, today) {
+  if (!FIRST_MATCH_TIME[today]) return;
+
+  // 已有总结就不重新生成
   const existing = await env.DB.prepare(
     'SELECT is_final FROM summaries WHERE match_date = ?'
   ).bind(today).first();
   if (existing?.is_final) return;
+
+  // 检查排名数据是否存在（需要排名数据才能生成总结）
+  const hasRankings = await env.DB.prepare(
+    'SELECT 1 FROM daily_rankings WHERE match_date = ? LIMIT 1'
+  ).bind(today).first();
+  if (!hasRankings) return;
 
   // 获取今天的预测
   const { results: todayPreds } = await env.DB.prepare(
@@ -339,50 +473,6 @@ async function generateSummaryForDate(env, today) {
       for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
       const prize = Math.round((pool * totalRate) / tiedCount);
       statsText += `第${rank}名: ${u.name} (${u.points}分 ${u.details.join(' ')}, 奖金+¥${prize})\n`;
-
-      // 存入 daily_rankings
-      await env.DB.prepare(
-        `INSERT INTO daily_rankings (match_date, nickname, rank, points, prize)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(match_date, nickname) DO UPDATE SET rank=excluded.rank, points=excluded.points, prize=excluded.prize`
-      ).bind(today, u.name, rank, u.points, prize).run();
-    }
-
-    // 存总排行 snapshot
-    const { results: allDailyRankings } = await env.DB.prepare(
-      "SELECT nickname, SUM(prize) as total_earnings FROM daily_rankings WHERE match_date <= ? GROUP BY nickname"
-    ).bind(today).all();
-    const { results: allCosts } = await env.DB.prepare(
-      "SELECT nickname, COUNT(DISTINCT match_date) as days FROM daily_rankings WHERE match_date <= ? GROUP BY nickname"
-    ).bind(today).all();
-    // 计算每人总cost（需要知道每天几场）
-    const costMap = {};
-    for (const c of allCosts) {
-      // 简化：从 daily_rankings 的天数 × 每天平均cost 不准确，直接从 predictions 算
-      costMap[c.nickname] = 0;
-    }
-    const { results: costData } = await env.DB.prepare(
-      "SELECT p.nickname, p.match_date, COUNT(DISTINCT p.match_id) as matches FROM predictions p INNER JOIN results r ON p.match_date = r.match_date AND r.status = 'final' WHERE p.match_date <= ? GROUP BY p.nickname, p.match_date"
-    ).bind(today).all();
-    for (const c of costData) {
-      if (!costMap[c.nickname]) costMap[c.nickname] = 0;
-      costMap[c.nickname] += 5 * c.matches;
-    }
-
-    const totalRanking = allDailyRankings.map(r => ({
-      nickname: r.nickname,
-      total_earnings: r.total_earnings || 0,
-      total_cost: costMap[r.nickname] || 0,
-      net: (r.total_earnings || 0) - (costMap[r.nickname] || 0),
-    })).sort((a, b) => b.net - a.net);
-
-    for (let i = 0; i < totalRanking.length; i++) {
-      const t = totalRanking[i];
-      await env.DB.prepare(
-        `INSERT INTO total_rankings_snapshot (match_date, nickname, total_earnings, total_cost, net, rank)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(match_date, nickname) DO UPDATE SET total_earnings=excluded.total_earnings, total_cost=excluded.total_cost, net=excluded.net, rank=excluded.rank`
-      ).bind(today, t.nickname, t.total_earnings, t.total_cost, t.net, i + 1).run();
     }
 
     // 查明天比赛信息
@@ -406,7 +496,7 @@ async function generateSummaryForDate(env, today) {
 
     statsText += tomorrowInfo;
 
-    // 加入总排行信息 + 前一天对比
+    // 加入总排行信息 + 前一天对比（只读数据库，不写入）
     const prevDate = allMatchDates[todayIdx - 1] || null;
     let prevSnapshot = [];
     if (prevDate) {
@@ -415,6 +505,9 @@ async function generateSummaryForDate(env, today) {
       ).bind(prevDate).all();
       prevSnapshot = prevData || [];
     }
+    const { results: todaySnapshot } = await env.DB.prepare(
+      "SELECT nickname, net, rank FROM total_rankings_snapshot WHERE match_date = ? ORDER BY rank"
+    ).bind(today).all();
 
     statsText += `\n\n前一天总排行: `;
     if (prevSnapshot.length > 0) {
@@ -423,7 +516,11 @@ async function generateSummaryForDate(env, today) {
       statsText += '无';
     }
     statsText += `\n今天总排行: `;
-    statsText += totalRanking.map((t, i) => `${i+1}.${t.nickname}(${t.net >= 0 ? '+' : ''}${t.net})`).join(' ');
+    if (todaySnapshot && todaySnapshot.length > 0) {
+      statsText += todaySnapshot.map(t => `${t.rank}.${t.nickname}(${t.net >= 0 ? '+' : ''}${t.net})`).join(' ');
+    } else {
+      statsText += '计算中';
+    }
 
     const dateShort = today.replace('2026-', '').replace('-', '.');
     prompt = `你是世界杯竞猜群的主持人兼解说员。根据数据写一段比赛日总结（150字左右），开头写"${dateShort} 结果总结及颁奖："，包含：1.今日排名颁奖（提到具体猜中了哪场比赛）2.亮点或槽点 3.提一句总排行变化 4.预告明天比赛（不要提具体奖池金额）5.空一行后写"人道是："然后换行写一首四句打油诗（押韵、点名、搞笑）。语气生动有趣，像发微信群的消息。严格只提到数据中出现的人名，不要编造。不要markdown。注意：🎯表示精确命中一场得5分，✅表示猜对胜负得2分，👍表示猜对净胜球得3分，❌表示猜错得0分。同分时先比净胜球偏差（小的赢），再比进球偏差（小的赢）。严格按数据描述，不要夸大（比如一场精确命中不能说"全部命中"）。
@@ -789,7 +886,8 @@ async function handleAPI(url, request, env) {
       }
       await fetchAndStoreResults(env);
       await fetchAndStoreOdds(env);
-      await generateDaySummary(env);
+      await settleAllDays(env);
+      await generateAllSummaries(env);
       await generateMatchPrompt(env);
       return json({ ok: true, msg: '同步完成' }, 200, headers);
     }
@@ -916,6 +1014,14 @@ async function handleAPI(url, request, env) {
       // 返回所有 live 状态的比分
       const { results } = await env.DB.prepare(
         "SELECT match_id, match_date, home_score, away_score, status FROM results WHERE status = 'live'"
+      ).all();
+      return json(results, 200, headers);
+    }
+
+    // GET /api/trend - 总排行排名走势
+    if (url.pathname === '/api/trend' && request.method === 'GET') {
+      const { results } = await env.DB.prepare(
+        'SELECT match_date, nickname, rank FROM total_rankings_snapshot ORDER BY match_date, nickname'
       ).all();
       return json(results, 200, headers);
     }
