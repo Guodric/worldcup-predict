@@ -440,9 +440,9 @@ function isDayLocked(date) {
   if (!matches || !matches.length) return false;
   const firstTime = matches[0].time; // "03:00"
   const [h, m] = firstTime.split(':').map(Number);
-  const now = getNowBeijing();
-  const kickoff = new Date(date + 'T00:00:00');
-  kickoff.setHours(h, m, 0, 0);
+  const now = new Date();
+  const kickoff = new Date(date + 'T00:00:00Z');
+  kickoff.setUTCHours(h - 8, m, 0, 0);
   return now >= kickoff;
 }
 
@@ -452,10 +452,11 @@ function isDayFinished(date) {
   if (!matches || !matches.length) return false;
   const lastTime = matches[matches.length - 1].time;
   const [h, m] = lastTime.split(':').map(Number);
-  const now = getNowBeijing();
-  const endApprox = new Date(date + 'T00:00:00');
-  endApprox.setHours(h + 2, m, 0, 0);
-  return now >= endApprox;
+  const now = new Date();
+  // 北京时间转UTC：开球时间(北京) - 8小时 = UTC
+  const endUTC = new Date(date + 'T00:00:00Z');
+  endUTC.setUTCHours(h - 8 + 2, m, 0, 0);
+  return now >= endUTC;
 }
 
 // 判断某天比赛结束后是否超过3小时（用于战报默认显示当天）
@@ -464,9 +465,9 @@ function isDayPast3Hours(date) {
   if (!matches || !matches.length) return false;
   const lastTime = matches[matches.length - 1].time;
   const [h, m] = lastTime.split(':').map(Number);
-  const now = getNowBeijing();
-  const threeHoursAfter = new Date(date + 'T00:00:00');
-  threeHoursAfter.setHours(h + 5, m, 0, 0);
+  const now = new Date();
+  const threeHoursAfter = new Date(date + 'T00:00:00Z');
+  threeHoursAfter.setUTCHours(h - 8 + 5, m, 0, 0);
   return now >= threeHoursAfter;
 }
 
