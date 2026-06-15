@@ -785,7 +785,7 @@ async function renderLeaderboard() {
     const trendData = await apiGet('/api/trend');
     if (trendData && trendData.length > 0) {
       const dates = [...new Set(trendData.map(r => r.match_date))].sort();
-      const colors = ['#e94560','#f5a623','#4CAF50','#2196F3','#9C27B0','#FF9800','#00BCD4'];
+      const colors = ['#e94560','#f5a623','#4CAF50','#2196F3','#ff47d1','#ffffff','#00e5ff'];
       const datasets = MEMBERS.map((name, i) => ({
         label: name,
         data: dates.map(d => {

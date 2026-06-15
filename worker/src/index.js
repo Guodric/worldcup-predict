@@ -138,7 +138,7 @@ async function fetchAndStoreResults(env) {
     await env.DB.prepare(
       `INSERT INTO results (match_id, match_date, home_score, away_score, status)
        VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status=excluded.status, updated_at=datetime('now')`
+       ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status=CASE WHEN results.status='final' THEN 'final' ELSE excluded.status END, updated_at=datetime('now')`
     ).bind(matchId, dateStr, homeScore, awayScore, status).run();
   }
 }
