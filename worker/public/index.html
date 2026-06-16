@@ -1173,9 +1173,10 @@ const ACHIEVEMENT_DEFS = [
   { id: 'sniper', icon: '🎯', name: '神射手', desc: '谁精确命中最多？', stat: 'exactHits', unit: '次命中', isRanked: true },
   { id: 'streak3', icon: '🔥', name: '常胜将军', desc: '谁进前三最多？', stat: 'top3Count', unit: '次前三', isRanked: true },
   { id: 'perfect_day', icon: '👑', name: '高光时刻', desc: '单日最高分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'highlight' },
+  { id: 'best_avg', icon: '🦅', name: '实至名归', desc: '场均得分最高的日冠军', check: () => false, progress: () => '', isSpecial: true, specialType: 'best_avg' },
   { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '谁猜中冷门最多？(赔率>3.0)', stat: 'upsetHits', unit: '次冷门', isRanked: true, color: '#2196F3' },
-  { id: 'draw_master', icon: '🤝', name: '和棋大师', desc: '谁猜中平局最多？', stat: 'drawHits', unit: '次平局', isRanked: true },
   { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日最低分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'lowlight' },
+  { id: 'worst_avg', icon: '🐔', name: '菜鸡互啄', desc: '场均得分最低的日冠军', check: () => false, progress: () => '', isSpecial: true, specialType: 'worst_avg' },
   { id: 'reverse', icon: '📉', name: '反向指标', desc: '谁没进前三最多？', stat: 'notTop3Count', unit: '次落榜', isRanked: true },
   { id: 'rocket', icon: '🚀', name: '火箭升空', desc: '单日最大排名跃升', stat: 'maxRankJump', unit: '位跃升', isRanked: true },
   { id: 'freefall', icon: '🪂', name: '自由落体', desc: '单日最大排名跌落', stat: 'maxRankDrop', unit: '位跌落', isRanked: true },
@@ -1204,7 +1205,7 @@ async function renderAchievements() {
     return;
   }
 
-  const { stats, highlightTop3, lowlightTop3, soulmatePairs, earlyBirdRanking, latecomerRanking, copycatRanking } = data;
+  const { stats, highlightTop3, lowlightTop3, bestAvgTop3, worstAvgTop3, soulmatePairs, earlyBirdRanking, latecomerRanking, copycatRanking } = data;
   const medals = ['🥇', '🥈', '🥉'];
   let html = '';
 
@@ -1296,6 +1297,28 @@ async function renderAchievements() {
       continue;
     }
 
+    // 实至名归
+    if (ach.isSpecial && ach.specialType === 'best_avg') {
+      const hasAny = bestAvgTop3 && bestAvgTop3.length > 0;
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${bestAvgTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:#f5a623;">${medals[i]}</span>
+            ${r.name} <span style="color:#f5a623;">场均${r.avg.toFixed(2)}分</span> <span style="color:#666;">(${r.date} ${r.points}分/${r.matches}场)</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
     // 黑色一天
     if (ach.isSpecial && ach.specialType === 'lowlight') {
       const hasAny = lowlightTop3.length > 0;
@@ -1312,6 +1335,28 @@ async function renderAchievements() {
           ${lowlightTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
             <span style="color:#e94560;">${medals[i]}</span>
             ${r.name} <span style="color:#e94560;">${r.points}分</span> <span style="color:#666;">(${r.date})</span>
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+      continue;
+    }
+
+    // 菜鸡互啄
+    if (ach.isSpecial && ach.specialType === 'worst_avg') {
+      const hasAny = worstAvgTop3 && worstAvgTop3.length > 0;
+      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
+        </div>
+        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          ${worstAvgTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
+            <span style="color:#e94560;">${medals[i]}</span>
+            ${r.name} <span style="color:#e94560;">场均${r.avg.toFixed(2)}分</span> <span style="color:#666;">(${r.date} ${r.points}分/${r.matches}场)</span>
           </div>`).join('')}
         </div>` : ''}
       </div>`;

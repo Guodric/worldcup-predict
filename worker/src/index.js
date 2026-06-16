@@ -1208,6 +1208,13 @@ async function handleAPI(url, request, env) {
         stats[name] = { exactHits, upsetHits, drawHits, top3Count, notTop3Count, wins, maxRankJump, maxRankDrop, dayScores: dayScoresForUser };
       }
 
+      // 每天场次数
+      const SCHEDULE_DATES_MATCHES = {};
+      for (const [key] of Object.entries(MATCH_LOOKUP)) {
+        const date = key.slice(-10);
+        SCHEDULE_DATES_MATCHES[date] = (SCHEDULE_DATES_MATCHES[date] || 0) + 1;
+      }
+
       // 高光/黑色一天
       const allDayScores = [];
       for (const name of ALLOWED_NICKNAMES) {
@@ -1217,6 +1224,25 @@ async function handleAPI(url, request, env) {
       }
       const highlightTop3 = [...allDayScores].sort((a, b) => b.points - a.points).slice(0, 3);
       const lowlightTop3 = [...allDayScores].sort((a, b) => a.points - b.points).slice(0, 3);
+
+      // 每日冠军的场均得分排名
+      const championAvgs = [];
+      for (const date of completeDates) {
+        // 找当日冠军
+        let champName = null, champPoints = 0;
+        for (const name of ALLOWED_NICKNAMES) {
+          if (dailyRanks[date]?.[name] === 1) {
+            const ds = stats[name].dayScores.find(d => d.date === date);
+            if (ds) { champName = name; champPoints = ds.points; break; }
+          }
+        }
+        if (champName) {
+          const numMatches = SCHEDULE_DATES_MATCHES[date] || 1;
+          championAvgs.push({ name: champName, date, points: champPoints, matches: numMatches, avg: champPoints / numMatches });
+        }
+      }
+      const bestAvgTop3 = [...championAvgs].sort((a, b) => b.avg - a.avg).slice(0, 3);
+      const worstAvgTop3 = [...championAvgs].sort((a, b) => a.avg - b.avg).slice(0, 3);
 
       // 心有灵犀
       const soulmatePairs = [];
@@ -1278,6 +1304,8 @@ async function handleAPI(url, request, env) {
         stats,
         highlightTop3,
         lowlightTop3,
+        bestAvgTop3,
+        worstAvgTop3,
         soulmatePairs: soulmatePairs.slice(0, 3),
         earlyBirdRanking,
         latecomerRanking,
