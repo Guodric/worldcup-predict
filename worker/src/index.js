@@ -451,7 +451,12 @@ async function generateAISummary(env, today) {
     statsText += `实际比分: `;
     for (const r of todayResults) {
       const teams = matchTeams[r.match_id];
-      if (teams) statsText += `${teams.home}${r.home_score}:${r.away_score}${teams.away} `;
+      if (!teams) continue;
+      const odds = oddsMap[r.match_id];
+      const aR = r.home_score > r.away_score ? 'home' : r.home_score < r.away_score ? 'away' : 'draw';
+      const winOdds = odds ? odds[aR] : null;
+      const coldLabel = winOdds && winOdds >= 3.0 ? '(冷门!)' : '';
+      statsText += `${teams.home}${r.home_score}:${r.away_score}${teams.away}${coldLabel} `;
     }
     statsText += `\n\n当日排名:\n`;
     let rank = 1;
@@ -472,7 +477,7 @@ async function generateAISummary(env, today) {
       let totalRate = 0;
       for (let pos = rank; pos < rank + tiedCount && pos <= 3; pos++) totalRate += prizeRates[pos-1] || 0;
       const prize = Math.round((pool * totalRate) / tiedCount);
-      statsText += `第${rank}名: ${u.name} (${u.points}分 ${u.details.join(' ')}, 奖金+¥${prize})\n`;
+      statsText += `第${rank}名: ${u.name} (${u.points}分 ${u.details.join(' ')}${prize ? ', 奖金+¥' + prize : ''})\n`;
     }
 
     // 查明天比赛信息
@@ -509,12 +514,23 @@ async function generateAISummary(env, today) {
       "SELECT nickname, net, rank FROM total_rankings_snapshot WHERE match_date = ? ORDER BY rank"
     ).bind(today).all();
 
-    statsText += `\n\n前一天总排行: `;
-    if (prevSnapshot.length > 0) {
-      statsText += prevSnapshot.map(p => `${p.rank}.${p.nickname}(${p.net >= 0 ? '+' : ''}${p.net})`).join(' ');
-    } else {
-      statsText += '无';
+    // 获取过去所有总排行快照用于趋势
+    const { results: allSnapshots } = await env.DB.prepare(
+      "SELECT match_date, nickname, rank FROM total_rankings_snapshot ORDER BY match_date"
+    ).all();
+    const snapshotsByDate = {};
+    for (const s of allSnapshots) {
+      if (!snapshotsByDate[s.match_date]) snapshotsByDate[s.match_date] = {};
+      snapshotsByDate[s.match_date][s.nickname] = s.rank;
     }
+    const snapshotDates = Object.keys(snapshotsByDate).sort();
+
+    statsText += `\n\n总排行走势（排名变化）:\n`;
+    for (const name of ALLOWED_NICKNAMES) {
+      const trend = snapshotDates.map(d => snapshotsByDate[d]?.[name] || '-').join('→');
+      statsText += `${name}: ${trend}\n`;
+    }
+
     statsText += `\n今天总排行: `;
     if (todaySnapshot && todaySnapshot.length > 0) {
       statsText += todaySnapshot.map(t => `${t.rank}.${t.nickname}(${t.net >= 0 ? '+' : ''}${t.net})`).join(' ');
