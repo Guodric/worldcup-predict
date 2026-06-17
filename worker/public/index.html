@@ -424,10 +424,8 @@ function getToday() {
 }
 
 function getNowBeijing() {
-  // 返回北京时间的 Date 对象（用 UTC+8 偏移）
-  const now = new Date();
-  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-  return new Date(utc + 8 * 3600000);
+  // 返回北京时间的 Date 对象（UTC+8）
+  return new Date(Date.now() + 8 * 3600000);
 }
 
 function getScheduleDates() {
@@ -473,29 +471,28 @@ function isDayPast3Hours(date) {
 
 // 竞猜面板应该显示哪天的比赛
 function findPredictDate() {
-  const today = getToday();
+  // 北京时间X天11:00AM后开放X+1天
+  // 北京时间11AM = UTC 03:00 同一天
+  const now = new Date();
   const dates = getScheduleDates();
 
-  // PDT 9pm 后开放下一天（PDT = UTC-7）
-  const now = new Date();
-  const pdtHour = (now.getUTCHours() - 7 + 24) % 24;
-  const isPast9pmPST = pdtHour >= 21;
-
-  if (isPast9pmPST) {
-    // 找明天（北京时间）之后最近的比赛日
-    for (const d of dates) {
-      if (d > today) return d;
+  // 找到最后一个"北京时间已过11AM"的比赛日
+  let latestPastDate = null;
+  for (const d of dates) {
+    // 北京时间 D日 11:00 = UTC D日 03:00
+    const cutoff = new Date(d + 'T03:00:00Z');
+    if (now >= cutoff) {
+      latestPastDate = d;
     }
   }
 
-  // 还没到9pm，显示今天（如果有比赛）
-  if (SCHEDULE[today]) return today;
-
-  // 今天没比赛，找下一个有比赛的日期
-  for (const d of dates) {
-    if (d >= today) return d;
+  if (latestPastDate) {
+    const idx = dates.indexOf(latestPastDate);
+    if (idx < dates.length - 1) return dates[idx + 1];
+    return latestPastDate;
   }
-  return dates[dates.length - 1];
+
+  return dates[0];
 }
 
 let currentDate = findPredictDate();
