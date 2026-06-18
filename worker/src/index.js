@@ -27,7 +27,7 @@ const TEAM_MAP = {
   'Saudi Arabia': '沙特', 'Uruguay': '乌拉圭', 'Iran': '伊朗', 'New Zealand': '新西兰',
   'France': '法国', 'Senegal': '塞内加尔', 'Iraq': '伊拉克', 'Norway': '挪威',
   'Argentina': '阿根廷', 'Algeria': '阿尔及利亚', 'Austria': '奥地利', 'Jordan': '约旦',
-  'Portugal': '葡萄牙', 'DR Congo': '刚果(金)', 'Uzbekistan': '乌兹别克斯坦', 'Colombia': '哥伦比亚',
+  'Portugal': '葡萄牙', 'DR Congo': '刚果(金)', 'Congo DR': '刚果(金)', 'Uzbekistan': '乌兹别克斯坦', 'Colombia': '哥伦比亚',
   'England': '英格兰', 'Croatia': '克罗地亚', 'Ghana': '加纳', 'Panama': '巴拿马',
   'Cape Verde': '佛得角',
 };
@@ -1153,7 +1153,7 @@ async function handleAPI(url, request, env) {
       const stats = {};
       for (const name of ALLOWED_NICKNAMES) {
         let exactHits = 0, upsetHits = 0, drawHits = 0;
-        let top3Count = 0, notTop3Count = 0, wins = 0;
+        let top3Count = 0, notTop3Count = 0, fourthCount = 0, wins = 0;
         let maxRankJump = 0, maxRankDrop = 0;
         const dayScoresForUser = [];
 
@@ -1189,6 +1189,7 @@ async function handleAPI(url, request, env) {
           const r = dailyRanks[date]?.[name];
           if (r && r <= 3) top3Count++;
           else if (r) notTop3Count++;
+          if (r === 4) fourthCount++;
           if (r === 1) wins++;
         }
 
@@ -1205,7 +1206,15 @@ async function handleAPI(url, request, env) {
           if (r) prevRank = r;
         }
 
-        stats[name] = { exactHits, upsetHits, drawHits, top3Count, notTop3Count, wins, maxRankJump, maxRankDrop, dayScores: dayScoresForUser };
+        // 排名标准差
+        const ranks = completeDates.map(d => dailyRanks[d]?.[name]).filter(r => r);
+        let rankStd = 0;
+        if (ranks.length > 1) {
+          const mean = ranks.reduce((s, r) => s + r, 0) / ranks.length;
+          rankStd = Math.sqrt(ranks.reduce((s, r) => s + (r - mean) ** 2, 0) / ranks.length);
+        }
+
+        stats[name] = { exactHits, upsetHits, drawHits, top3Count, notTop3Count, fourthCount, wins, maxRankJump, maxRankDrop, rankStd, dayScores: dayScoresForUser };
       }
 
       // 每天场次数

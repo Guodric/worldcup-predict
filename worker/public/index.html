@@ -871,11 +871,11 @@ async function renderHistory() {
     } else if (actual && actual.status === 'final') {
       actualStr = `${actual.home} : ${actual.away}`;
     } else {
-      // 没有数据，用时间估算
+      // 没有数据，用时间估算（北京时间转UTC比较）
       const [mh, mm] = m.time.split(':').map(Number);
-      const now = getNowBeijing();
-      const kickoff = new Date(historyDate + 'T00:00:00');
-      kickoff.setHours(mh, mm, 0, 0);
+      const now = new Date();
+      const kickoff = new Date(historyDate + 'T00:00:00Z');
+      kickoff.setUTCHours(mh - 8, mm, 0, 0);
       const endTime = new Date(kickoff.getTime() + 2 * 3600000);
       if (now < kickoff) {
         actualStr = '<span style="color:#888;">待开赛</span>';
@@ -1072,9 +1072,10 @@ async function renderHistory() {
   const firstMatch = matches[0];
   if (firstMatch && !allResultsComplete) {
     const [fh, fm] = firstMatch.time.split(':').map(Number);
-    const now = getNowBeijing();
-    const firstKickoff = new Date(historyDate + 'T00:00:00');
-    firstKickoff.setHours(fh, fm, 0, 0);
+    const now = new Date();
+    // 北京时间转UTC: 开球时间(北京) - 8小时
+    const firstKickoff = new Date(historyDate + 'T00:00:00Z');
+    firstKickoff.setUTCHours(fh - 8, fm, 0, 0);
     if (now >= firstKickoff) {
       refreshBtnHtml = `<div style="text-align:center;margin-bottom:10px;">
         <button onclick="refreshLiveScores()" class="btn" style="width:auto;padding:8px 16px;font-size:12px;background:linear-gradient(135deg,#4CAF50,#45a049);">🔄 刷新比分排名</button>
@@ -1169,14 +1170,14 @@ const ACHIEVEMENT_DEFS = [
   { id: 'champion3', icon: '🏆', name: '冠军收割机', desc: '谁拿冠军最多？', stat: 'wins', unit: '次冠军', isRanked: true },
   { id: 'sniper', icon: '🎯', name: '神射手', desc: '谁精确命中最多？', stat: 'exactHits', unit: '次命中', isRanked: true },
   { id: 'streak3', icon: '🔥', name: '常胜将军', desc: '谁进前三最多？', stat: 'top3Count', unit: '次前三', isRanked: true },
-  { id: 'perfect_day', icon: '👑', name: '高光时刻', desc: '单日最高分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'highlight' },
-  { id: 'best_avg', icon: '🦅', name: '实至名归', desc: '场均得分最高的日冠军', check: () => false, progress: () => '', isSpecial: true, specialType: 'best_avg' },
+  { id: 'best_avg', icon: '👑', name: '实至名归', desc: '场均得分最高的日冠军', check: () => false, progress: () => '', isSpecial: true, specialType: 'best_avg' },
   { id: 'cold_hunter', icon: '🧊', name: '冷门猎手', desc: '谁猜中冷门最多？(赔率>3.0)', stat: 'upsetHits', unit: '次冷门', isRanked: true, color: '#2196F3' },
   { id: 'zero_day', icon: '💀', name: '黑色一天', desc: '单日最低分表现', check: () => false, progress: () => '', isSpecial: true, specialType: 'lowlight' },
   { id: 'worst_avg', icon: '🐔', name: '菜鸡互啄', desc: '场均得分最低的日冠军', check: () => false, progress: () => '', isSpecial: true, specialType: 'worst_avg' },
+  { id: 'fourth', icon: '🚪', name: '滑门而过', desc: '谁第四名最多？', stat: 'fourthCount', unit: '次第四', isRanked: true },
+  { id: 'stable', icon: '🪨', name: '稳如磐石', desc: '排名波动最小', stat: 'rankStd', unit: '', isRanked: true, color: '#4CAF50', sortAsc: true },
+  { id: 'elevator', icon: '🛗', name: '升降机', desc: '排名波动最大', stat: 'rankStd', unit: '', isRanked: true, color: '#e94560' },
   { id: 'reverse', icon: '📉', name: '反向指标', desc: '谁没进前三最多？', stat: 'notTop3Count', unit: '次落榜', isRanked: true },
-  { id: 'rocket', icon: '🚀', name: '火箭升空', desc: '单日最大排名跃升', stat: 'maxRankJump', unit: '位跃升', isRanked: true },
-  { id: 'freefall', icon: '🪂', name: '自由落体', desc: '单日最大排名跌落', stat: 'maxRankDrop', unit: '位跌落', isRanked: true },
   { id: 'early_bird', icon: '🐦', name: '笨鸟先飞', desc: '谁交的最早？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'latecomer', icon: '🏃', name: '大忙人', desc: '谁最忙顾不上交？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
@@ -1250,7 +1251,7 @@ async function renderAchievements() {
       const ranking = MEMBERS
         .map(name => ({ name, value: stats[name]?.[ach.stat] || 0 }))
         .filter(r => r.value > 0)
-        .sort((a, b) => b.value - a.value)
+        .sort((a, b) => ach.sortAsc ? a.value - b.value : b.value - a.value)
         .slice(0, 3);
       const hasAny = ranking.length > 0;
       html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
@@ -1265,29 +1266,7 @@ async function renderAchievements() {
         ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
           ${ranking.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
             <span style="color:${i === 0 ? '#f5a623' : '#888'};">${medals[i]}</span>
-            ${r.name} <span style="color:${ach.color || '#f5a623'};">${r.value}${ach.unit}</span>
-          </div>`).join('')}
-        </div>` : ''}
-      </div>`;
-      continue;
-    }
-
-    // 高光时刻
-    if (ach.isSpecial && ach.specialType === 'highlight') {
-      const hasAny = highlightTop3.length > 0;
-      html += `<div class="card" style="opacity:${hasAny ? '1' : '0.5'};">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:24px;">${ach.icon}</span>
-          <div style="flex:1;">
-            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
-            <div style="font-size:11px;color:#888;">${ach.desc}</div>
-          </div>
-          ${!hasAny ? '<span style="font-size:11px;color:#666;">🔒 未解锁</span>' : ''}
-        </div>
-        ${hasAny ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
-          ${highlightTop3.map((r, i) => `<div style="padding:3px 0;font-size:12px;">
-            <span style="color:#f5a623;">${medals[i]}</span>
-            ${r.name} <span style="color:#f5a623;">${r.points}分</span> <span style="color:#666;">(${r.date})</span>
+            ${r.name} <span style="color:${ach.color || '#f5a623'};">${typeof r.value === 'number' && r.value % 1 !== 0 ? r.value.toFixed(2) : r.value}${ach.unit}</span>
           </div>`).join('')}
         </div>` : ''}
       </div>`;
