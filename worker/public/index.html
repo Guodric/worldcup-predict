@@ -211,7 +211,7 @@ h1 {
     <div class="deadline-note" id="deadline-note"></div>
     <div id="ai-prompt-card"></div>
     <div id="matches-list"></div>
-    <button class="btn" id="submit-btn">提交预测</button>
+    <button class="btn" id="submit-btn" style="display:none;">提交预测</button>
   </div>
 
   <div class="panel" id="leaderboard">
@@ -530,12 +530,19 @@ function renderNickChips() {
 
   container.querySelectorAll('.nick-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      document.getElementById('nickname').value = chip.dataset.name;
+      if (chip.classList.contains('selected')) {
+        // deselect
+        chip.classList.remove('selected');
+        document.getElementById('nickname').value = '';
+        document.getElementById('submit-btn').style.display = 'none';
+        renderMatches();
+        return;
+      }
       container.querySelectorAll('.nick-chip').forEach(c => c.classList.remove('selected'));
       chip.classList.add('selected');
-      localStorage.setItem('wc_nickname', chip.dataset.name);
       document.getElementById('nickname').value = chip.dataset.name;
       document.getElementById('submit-btn').textContent = `以「${chip.dataset.name}」提交`;
+      document.getElementById('submit-btn').style.display = 'block';
       renderMatches();
       setTimeout(loadMyPredictions, 300);
     });
@@ -595,7 +602,8 @@ async function renderMatches() {
     kickoffUTC.setUTCHours(bh - 8, bm, 0, 0);
     window._kickoffUTC = kickoffUTC;
     deadlineEl.innerHTML = `📅 ${currentDate} · ⏰ <span id="countdown"></span>`;
-    submitBtn.style.display = 'block';
+    const hasNick = document.getElementById('nickname').value.trim();
+    submitBtn.style.display = hasNick ? 'block' : 'none';
     updateCountdown();
   }
 
@@ -1182,6 +1190,7 @@ const ACHIEVEMENT_DEFS = [
   { id: 'latecomer', icon: '🏃', name: '大忙人', desc: '谁最忙顾不上交？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'soulmate', icon: '💕', name: '心有灵犀', desc: '谁跟谁猜的最像？', check: () => false, progress: () => '', isSpecial: true },
   { id: 'copycat', icon: '🐱', name: '抄袭之王', desc: '别人先猜了，你跟着猜一样的', check: () => false, progress: () => '', isSpecial: true },
+  { id: 'discipline', icon: '⚖️', name: '纪律处分', desc: '违规罚分记录', check: () => false, progress: () => '', isSpecial: true, specialType: 'discipline' },
   { id: 'live_fan', icon: '🏟️', name: '现场达人', desc: '谁现场看球最多？', check: () => false, progress: () => '', isSpecial: true, specialType: 'live_fan' },
   { id: 'sponsor', icon: '💰', name: '赞助商', desc: '感谢金主爸爸', check: () => false, progress: () => '', isSpecial: true, specialType: 'sponsor' },
 ];
@@ -1208,6 +1217,25 @@ async function renderAchievements() {
   let html = '';
 
   for (const ach of ACHIEVEMENT_DEFS) {
+    // 纪律处分
+    if (ach.isSpecial && ach.specialType === 'discipline') {
+      html += `<div class="card">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:24px;">${ach.icon}</span>
+          <div style="flex:1;">
+            <div style="font-weight:bold;font-size:14px;">${ach.name}</div>
+            <div style="font-size:11px;color:#888;">${ach.desc}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #0f3460;">
+          <div style="padding:3px 0;font-size:12px;">
+            <span style="color:#e94560;">🟥</span> 喂狗 <span style="color:#e94560;">-1分（篡改他人预测）</span>
+          </div>
+        </div>
+      </div>`;
+      continue;
+    }
+
     // 现场达人
     if (ach.isSpecial && ach.specialType === 'live_fan') {
       html += `<div class="card">
@@ -1723,17 +1751,8 @@ function showToast(msg, isError) {
 
 // ============ INIT ============
 renderNickChips();
-const saved = localStorage.getItem('wc_nickname');
-if (saved) {
-  document.getElementById('nickname').value = saved;
-  document.querySelectorAll('.nick-chip').forEach(c => {
-    if (c.dataset.name === saved) c.classList.add('selected');
-  });
-  document.getElementById('submit-btn').textContent = `以「${saved}」提交`;
-}
 renderMatches();
 loadAIPrompt();
-if (saved) setTimeout(loadMyPredictions, 500);
 
 // PWA Service Worker
 if ('serviceWorker' in navigator) {
