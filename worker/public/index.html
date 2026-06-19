@@ -209,7 +209,6 @@ h1 {
     <input type="hidden" id="nickname" />
     <div class="nick-chips" id="nick-chips"></div>
     <div class="deadline-note" id="deadline-note"></div>
-    <div id="ai-prompt-card"></div>
     <div id="matches-list"></div>
     <button class="btn" id="submit-btn" style="display:none;">提交预测</button>
   </div>
@@ -1460,29 +1459,6 @@ async function renderAchievements() {
 }
 
 
-// ============ AI Prompt (加载一次) ============
-async function loadAIPrompt() {
-  const el = document.getElementById('ai-prompt-card');
-  if (!el) return;
-  el.innerHTML = `<div class="card" style="padding:10px 14px;border:1px solid #667eea;">
-    <div style="font-size:12px;color:#ddd;" id="ai-prompt-text">加载中...</div>
-  </div>`;
-  try {
-    const promptData = await apiGet(`/api/match-prompt?date=${currentDate}`);
-    const textEl = document.getElementById('ai-prompt-text');
-    if (!textEl) return;
-    if (promptData.prompt) {
-      textEl.textContent = promptData.prompt;
-    } else {
-      const matches = SCHEDULE[currentDate] || [];
-      textEl.textContent = `今日${matches.length}场对决，快来预测吧！`;
-    }
-  } catch(e) {
-    const textEl = document.getElementById('ai-prompt-text');
-    if (textEl) textEl.textContent = '快来预测吧！';
-  }
-}
-
 // ============ Confetti ============
 function launchConfetti() {
   const container = document.createElement('div');
@@ -1752,7 +1728,6 @@ function showToast(msg, isError) {
 // ============ INIT ============
 renderNickChips();
 renderMatches();
-loadAIPrompt();
 
 // PWA Service Worker
 if ('serviceWorker' in navigator) {
