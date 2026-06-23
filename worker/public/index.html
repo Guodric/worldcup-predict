@@ -259,12 +259,30 @@ h1 {
       <p>• 开赛后自动锁定</p>
       <p>• 每天独立结算，互不影响</p>
 
-      <h3>💡 举例</h3>
+      <h3>💡 小组赛举例</h3>
       <p>实际：巴西 2:1 德国</p>
       <p>猜 2:1 → 精确命中 🎯 <strong>5分</strong></p>
       <p>猜 3:2 → 胜负对+净胜球对 👍 <strong>3分</strong></p>
       <p>猜 3:0 → 胜负对 ✅ <strong>2分</strong></p>
       <p>猜 0:1 → 胜负错 ❌ <strong>0分</strong></p>
+
+      <h3 style="margin-top:16px;color:#f5a623;">⚔️ 淘汰赛规则</h3>
+      <p><strong>预测格式：</strong></p>
+      <p>• 填写90分钟比分 + 选择谁晋级</p>
+      <p>• 若猜90分钟平局，需额外填写加时结束比分</p>
+
+      <p style="margin-top:8px;"><strong>排名规则（逐条比较）：</strong></p>
+      <p>1️⃣ 最终胜负关系（谁晋级）</p>
+      <p>2️⃣ 120分钟净胜球差</p>
+      <p>3️⃣ 120分钟进球数差</p>
+      <p>4️⃣ 90分钟胜负关系</p>
+      <p>5️⃣ 90分钟净胜球差</p>
+      <p>6️⃣ 90分钟进球数差</p>
+
+      <p style="margin-top:8px;"><strong>补充条款：</strong></p>
+      <p>• 前三名但没猜对晋级方 → 不分得本场奖金</p>
+      <p>• 所有人都没猜对晋级方 → 奖金累积到决赛日</p>
+      <p>• 同分时主办方联系对应参赛者加赛（摇骰子等）</p>
     </div>
   </div>
 
@@ -488,7 +506,10 @@ function findPredictDate() {
   if (latestPastDate) {
     const idx = dates.indexOf(latestPastDate);
     if (idx < dates.length - 1) return dates[idx + 1];
-    return latestPastDate;
+    // 小组赛最后一天也过了cutoff → 返回"明天"让knockout逻辑接管
+    const lastDate = new Date(latestPastDate + 'T00:00:00Z');
+    lastDate.setUTCDate(lastDate.getUTCDate() + 1);
+    return lastDate.toISOString().split('T')[0];
   }
 
   return dates[0];
@@ -569,6 +590,18 @@ async function renderMatches() {
   const container = document.getElementById('matches-list');
   const deadlineEl = document.getElementById('deadline-note');
   const submitBtn = document.getElementById('submit-btn');
+
+  // 如果不在小组赛赛程中，尝试淘汰赛
+  if (!matches.length) {
+    try {
+      const koMatches = await apiGet('/api/knockout-matches');
+      const todayKO = koMatches.filter(m => m.match_date === currentDate);
+      if (todayKO.length > 0) {
+        renderKnockoutMatches(todayKO, container, deadlineEl, submitBtn);
+        return;
+      }
+    } catch(e) {}
+  }
   const locked = isDayLocked(currentDate);
 
   if (!matches.length) {
@@ -671,6 +704,102 @@ async function renderMatches() {
   container.innerHTML = myStatusHtml + matchCardsHtml;
 }
 
+// ============ 淘汰赛竞猜 ============
+function renderKnockoutMatches(koMatches, container, deadlineEl, submitBtn) {
+  const locked = false; // TODO: 根据开赛时间判断
+  const disabledAttr = locked ? 'disabled style="opacity:0.5;"' : '';
+
+  // 检查是否锁定（第一场开球后）
+  const firstKickoff = koMatches[0]?.kickoff_utc;
+  if (firstKickoff && new Date() >= new Date(firstKickoff)) {
+    deadlineEl.innerHTML = `<span style="color:#e94560;">🔒 ${currentDate} 已开赛，预测已锁定</span>`;
+    submitBtn.style.display = 'none';
+  } else if (firstKickoff) {
+    const kickoff = new Date(firstKickoff);
+    window._kickoffUTC = kickoff;
+    deadlineEl.innerHTML = `📅 ${currentDate} · ⏰ <span id="countdown"></span>`;
+    const hasNick = document.getElementById('nickname').value.trim();
+    submitBtn.style.display = hasNick ? 'block' : 'none';
+    updateCountdown();
+  }
+
+  // 用 pill 颜色标记谁已提交
+  try {
+    apiGet(`/api/predictions?date=${currentDate}`).then(preds => {
+      const submitted = Object.keys(preds || {});
+      document.querySelectorAll('.nick-chip').forEach(chip => {
+        if (submitted.includes(chip.dataset.name)) chip.classList.add('submitted');
+        else chip.classList.remove('submitted');
+      });
+    });
+  } catch(e) {}
+
+  container.innerHTML = koMatches.map(m => {
+    const hf = FLAGS[m.home_team] || '';
+    const af = FLAGS[m.away_team] || '';
+    const localTime = new Date(m.kickoff_utc).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});
+
+    return `
+    <div class="card match-card" id="card-${m.match_id}">
+      <div class="match-header">
+        <span style="color:#f5a623;">${m.stage}</span>
+        <span>${localTime} 开球</span>
+      </div>
+      <div class="match-teams">
+        <span class="team-name team-left">${hf} ${m.home_team}</span>
+        <span class="vs">VS</span>
+        <span class="team-name team-right">${m.away_team} ${af}</span>
+      </div>
+      <div style="text-align:center;margin:8px 0;font-size:12px;color:#888;">90分钟比分</div>
+      <div class="score-input">
+        <input type="number" inputmode="numeric" min="0" max="20" id="h_${m.match_id}" ${disabledAttr} />
+        <span class="colon">:</span>
+        <input type="number" inputmode="numeric" min="0" max="20" id="a_${m.match_id}" ${disabledAttr} />
+      </div>
+      <div style="margin-top:10px;padding-top:8px;border-top:1px solid #0f3460;">
+        <div style="font-size:12px;color:#888;text-align:center;margin-bottom:6px;">谁晋级？</div>
+        <div style="display:flex;justify-content:center;gap:8px;">
+          <button type="button" class="nick-chip ko-winner-btn" data-match="${m.match_id}" data-team="${m.home_team}" onclick="selectKOWinner(this)" ${disabledAttr}>${hf}${m.home_team}</button>
+          <button type="button" class="nick-chip ko-winner-btn" data-match="${m.match_id}" data-team="${m.away_team}" onclick="selectKOWinner(this)" ${disabledAttr}>${af}${m.away_team}</button>
+        </div>
+        <input type="hidden" id="winner_${m.match_id}" />
+      </div>
+      <div id="extra_${m.match_id}" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid #0f3460;">
+        <div style="font-size:12px;color:#888;text-align:center;margin-bottom:6px;">加时结束比分（含90分钟）</div>
+        <div class="score-input">
+          <input type="number" inputmode="numeric" min="0" max="20" id="eh_${m.match_id}" ${disabledAttr} />
+          <span class="colon">:</span>
+          <input type="number" inputmode="numeric" min="0" max="20" id="ea_${m.match_id}" ${disabledAttr} />
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 监听比分变化——如果90分钟是平局，显示加时输入框
+  koMatches.forEach(m => {
+    const hEl = document.getElementById(`h_${m.match_id}`);
+    const aEl = document.getElementById(`a_${m.match_id}`);
+    const extraDiv = document.getElementById(`extra_${m.match_id}`);
+    const checkDraw = () => {
+      if (hEl.value !== '' && aEl.value !== '' && hEl.value === aEl.value) {
+        extraDiv.style.display = 'block';
+      } else {
+        extraDiv.style.display = 'none';
+      }
+    };
+    hEl?.addEventListener('input', checkDraw);
+    aEl?.addEventListener('input', checkDraw);
+  });
+}
+
+function selectKOWinner(btn) {
+  const matchId = btn.dataset.match;
+  // deselect others for this match
+  document.querySelectorAll(`.ko-winner-btn[data-match="${matchId}"]`).forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  document.getElementById(`winner_${matchId}`).value = btn.dataset.team;
+}
+
 function jumpToDate(date) {
   currentDate = date;
   renderMatches();
@@ -702,17 +831,55 @@ document.getElementById('submit-btn').addEventListener('click', async () => {
   if (!nickname) { showToast('请先选择你的昵称', true); return; }
 
   const matches = SCHEDULE[currentDate] || [];
-  if (!matches.length) { showToast('当天没有比赛', true); return; }
+  let predictions = {};
 
-  const predictions = {};
-  for (const m of matches) {
-    const h = document.getElementById(`h_${m.id}`).value;
-    const a = document.getElementById(`a_${m.id}`).value;
-    if (h === '' || a === '') {
-      showToast(`请填写 ${m.home} vs ${m.away}`, true);
-      return;
+  if (matches.length) {
+    // 小组赛
+    for (const m of matches) {
+      const h = document.getElementById(`h_${m.id}`).value;
+      const a = document.getElementById(`a_${m.id}`).value;
+      if (h === '' || a === '') {
+        showToast(`请填写 ${m.home} vs ${m.away}`, true);
+        return;
+      }
+      predictions[m.id] = { home: parseInt(h), away: parseInt(a) };
     }
-    predictions[m.id] = { home: parseInt(h), away: parseInt(a) };
+  } else {
+    // 淘汰赛
+    const koMatchEls = document.querySelectorAll('.match-card[id^="card-KO_"]');
+    if (!koMatchEls.length) { showToast('当天没有比赛', true); return; }
+
+    for (const el of koMatchEls) {
+      const matchId = el.id.replace('card-', '');
+      const h = document.getElementById(`h_${matchId}`)?.value;
+      const a = document.getElementById(`a_${matchId}`)?.value;
+      const winner = document.getElementById(`winner_${matchId}`)?.value;
+
+      if (h === '' || a === '' || h === undefined || a === undefined) {
+        showToast('请填写所有比赛的90分钟比分', true);
+        return;
+      }
+      if (!winner) {
+        showToast('请选择每场比赛的晋级方', true);
+        return;
+      }
+
+      const pred = { home: parseInt(h), away: parseInt(a), winner };
+
+      // 如果90分钟平局，需要填加时比分
+      if (parseInt(h) === parseInt(a)) {
+        const eh = document.getElementById(`eh_${matchId}`)?.value;
+        const ea = document.getElementById(`ea_${matchId}`)?.value;
+        if (eh === '' || ea === '' || eh === undefined || ea === undefined) {
+          showToast('猜平局请填写加时结束比分', true);
+          return;
+        }
+        pred.extra_home = parseInt(eh);
+        pred.extra_away = parseInt(ea);
+      }
+
+      predictions[matchId] = pred;
+    }
   }
 
   const btn = document.getElementById('submit-btn');

@@ -96,6 +96,7 @@ export default {
   // Cron Trigger: 自动拉取比赛结果、赔率，结算排名
   async scheduled(event, env, ctx) {
     await fetchAndStoreResults(env);
+    await fetchKnockoutSchedule(env);
     await fetchAndStoreOdds(env);
     await settleAllDays(env);
     await generateMatchPrompt(env);
@@ -140,6 +141,70 @@ async function fetchAndStoreResults(env) {
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(match_id) DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, status=CASE WHEN results.status='final' THEN 'final' ELSE excluded.status END, updated_at=datetime('now')`
     ).bind(matchId, dateStr, homeScore, awayScore, status).run();
+  }
+}
+
+// 拉取淘汰赛赛程
+async function fetchKnockoutSchedule(env) {
+  const API_TOKEN = env.FOOTBALL_API_TOKEN;
+  if (!API_TOKEN) return;
+
+  const stages = ['LAST_32', 'LAST_16', 'QUARTER_FINALS', 'SEMI_FINALS', 'THIRD_PLACE', 'FINAL'];
+  const res = await fetch(
+    `https://api.football-data.org/v4/competitions/WC/matches?stage=${stages.join(',')}`,
+    { headers: { 'X-Auth-Token': API_TOKEN } }
+  );
+  if (!res.ok) return;
+  const data = await res.json();
+  const matches = data.matches || [];
+
+  const stageMap = {
+    'LAST_32': '32强', 'LAST_16': '16强', 'QUARTER_FINALS': '8强',
+    'SEMI_FINALS': '半决赛', 'THIRD_PLACE': '三四名', 'FINAL': '决赛'
+  };
+
+  for (const m of matches) {
+    const homeName = m.homeTeam?.name ? (TEAM_MAP[m.homeTeam.name] || m.homeTeam.name) : null;
+    const awayName = m.awayTeam?.name ? (TEAM_MAP[m.awayTeam.name] || m.awayTeam.name) : null;
+
+    if (!homeName || !awayName) continue; // TBD, skip
+
+    const utcDate = new Date(m.utcDate);
+    const bjDate = new Date(utcDate.getTime() + 8 * 3600000);
+    const dateStr = bjDate.toISOString().split('T')[0];
+    const matchId = `KO_${m.id}`;
+    const stage = stageMap[m.stage] || m.stage;
+
+    // 比分处理
+    let homeScore90 = null, awayScore90 = null, homeScoreExtra = null, awayScoreExtra = null, winner = null;
+
+    if (m.status === 'FINISHED') {
+      homeScore90 = m.score?.halfTime?.home != null ? (m.score?.regularTime?.home ?? m.score?.fullTime?.home) : m.score?.fullTime?.home;
+      awayScore90 = m.score?.halfTime?.away != null ? (m.score?.regularTime?.away ?? m.score?.fullTime?.away) : m.score?.fullTime?.away;
+
+      if (m.score?.extraTime?.home != null) {
+        homeScoreExtra = (homeScore90 || 0) + m.score.extraTime.home;
+        awayScoreExtra = (awayScore90 || 0) + m.score.extraTime.away;
+      }
+
+      winner = m.score?.winner === 'HOME_TEAM' ? homeName :
+               m.score?.winner === 'AWAY_TEAM' ? awayName : null;
+    } else if (m.status === 'IN_PLAY' || m.status === 'PAUSED') {
+      homeScore90 = m.score?.fullTime?.home;
+      awayScore90 = m.score?.fullTime?.away;
+    }
+
+    await env.DB.prepare(
+      `INSERT INTO knockout_matches (match_id, match_date, stage, home_team, away_team, kickoff_utc, status, home_score_90, away_score_90, home_score_extra, away_score_extra, winner)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(match_id) DO UPDATE SET
+         home_team=excluded.home_team, away_team=excluded.away_team,
+         status=CASE WHEN knockout_matches.status='FINISHED' THEN 'FINISHED' ELSE excluded.status END,
+         home_score_90=excluded.home_score_90, away_score_90=excluded.away_score_90,
+         home_score_extra=excluded.home_score_extra, away_score_extra=excluded.away_score_extra,
+         winner=excluded.winner, updated_at=datetime('now')`
+    ).bind(matchId, dateStr, stage, homeName, awayName, m.utcDate, m.status,
+           homeScore90, awayScore90, homeScoreExtra, awayScoreExtra, winner).run();
   }
 }
 
@@ -707,29 +772,31 @@ async function handleAPI(url, request, env) {
       const firstKickoff = FIRST_MATCH_TIME[date];
       if (firstKickoff) {
         const now = new Date();
-        const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-        const beijing = new Date(utc + 8 * 3600000);
-        const [h, m] = firstKickoff.split(':').map(Number);
-        const kickoff = new Date(date + 'T00:00:00');
-        kickoff.setHours(h, m, 0, 0);
-        if (beijing >= kickoff) {
+        const kickoff = new Date(date + 'T00:00:00Z');
+        kickoff.setUTCHours(parseInt(firstKickoff.split(':')[0]) - 8, parseInt(firstKickoff.split(':')[1]), 0, 0);
+        if (now >= kickoff) {
+          return json({ error: '已开赛，预测已锁定' }, 403, headers);
+        }
+      } else {
+        // 淘汰赛：检查该日期第一场是否已开赛
+        const koFirst = await env.DB.prepare(
+          "SELECT kickoff_utc FROM knockout_matches WHERE match_date = ? ORDER BY kickoff_utc LIMIT 1"
+        ).bind(date).first();
+        if (koFirst && new Date() >= new Date(koFirst.kickoff_utc)) {
           return json({ error: '已开赛，预测已锁定' }, 403, headers);
         }
       }
 
-      // Upsert 每条预测
-      const stmt = env.DB.prepare(
-        `INSERT INTO predictions (nickname, match_date, match_id, home_score, away_score)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(nickname, match_date, match_id)
-         DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score, created_at=datetime('now')`
-      );
-
-      const batch = Object.entries(predictions).map(([matchId, scores]) =>
-        stmt.bind(nickname, date, matchId, scores.home, scores.away)
-      );
-
-      await env.DB.batch(batch);
+      // Upsert 每条预测（支持淘汰赛字段）
+      for (const [matchId, scores] of Object.entries(predictions)) {
+        await env.DB.prepare(
+          `INSERT INTO predictions (nickname, match_date, match_id, home_score, away_score, winner, extra_home, extra_away)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(nickname, match_date, match_id)
+           DO UPDATE SET home_score=excluded.home_score, away_score=excluded.away_score,
+             winner=excluded.winner, extra_home=excluded.extra_home, extra_away=excluded.extra_away, created_at=datetime('now')`
+        ).bind(nickname, date, matchId, scores.home, scores.away, scores.winner || null, scores.extra_home ?? null, scores.extra_away ?? null).run();
+      }
 
       // 审计日志
       const ip = request.headers.get('cf-connecting-ip') || '';
@@ -1039,6 +1106,14 @@ async function handleAPI(url, request, env) {
     if (url.pathname === '/api/trend' && request.method === 'GET') {
       const { results } = await env.DB.prepare(
         'SELECT match_date, nickname, rank FROM total_rankings_snapshot ORDER BY match_date, nickname'
+      ).all();
+      return json(results, 200, headers);
+    }
+
+    // GET /api/knockout-matches - 淘汰赛赛程
+    if (url.pathname === '/api/knockout-matches' && request.method === 'GET') {
+      const { results } = await env.DB.prepare(
+        'SELECT * FROM knockout_matches ORDER BY match_date, kickoff_utc'
       ).all();
       return json(results, 200, headers);
     }
