@@ -10,10 +10,6 @@ routes = [
 [triggers]
 crons = ["0,30 * * * *"]
 
-[vars]
-FOOTBALL_API_TOKEN = "6a4ad18e3d4e4403ac2461e0fe98e53e"
-ODDS_API_TOKEN = "47f7681ac41ca38a2c024c1928ca9343"
-ANTHROPIC_API_KEY = "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"
 
 [site]
 bucket = "./public"
